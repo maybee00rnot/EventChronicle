@@ -1,0 +1,11 @@
+{
+    "display_name": "EventChronicle",
+    "loading_order": 10,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Nastya",
+    "version": "1.0.0",
+    "description": "Structured event-based summary system for roleplay chats"
+}
