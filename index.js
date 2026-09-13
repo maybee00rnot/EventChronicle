@@ -42,78 +42,66 @@ const GEN_SECRETS = "secrets";
 // ---------- default prompts ----------
 
 const DEFAULT_PROMPTS = {
-    [GEN_EVENTS]: `You are a skilled reteller of roleplay events. Your task is to extract ALL significant plot events from the provided chat messages and GROUP THEM BY IN-WORLD DAY/DATE.
+    [GEN_EVENTS]: `You are a skilled reteller of roleplay events. Extract ALL significant plot events from the provided chat messages.
 
-═══ How to determine in-world dates ═══
-Carefully scan the chat text for ANY time indicators:
-1. Explicit dates or timestamps (e.g., "2026/02/14", "14 февраля", dates in <horae> tags like "time:2026/2/14 15:00")
-2. Time-of-day markers: dawn, morning, noon, afternoon, evening, dusk, night, midnight
-3. Day transitions: characters falling asleep and waking up, "the next morning", "когда наступил рассвет", "на следующий день", scene breaks with time skips
-4. Relative time references: "three days later", "the following week", "через два дня"
-5. In-world calendar systems: fantasy dates ("Third Day of Frostfall Moon"), seasons, festivals
-6. Contextual clues: meals (breakfast = morning, dinner = evening), shop opening/closing, sunlight/darkness descriptions
-
-Rules for dates:
-- If the chat contains explicit dates (from narration, horae tags, or character dialogue), use them exactly.
-- If no explicit date exists but day boundaries are clear (sleep/wake cycles, "next day"), number them sequentially: "Day 1", "Day 2", etc.
-- If multiple events happen in one day at different times, they ALL belong under the same day — do NOT split them.
-- A new day starts ONLY when there is a clear transition: sleeping through the night, an explicit "next day/morning" marker, or a stated time jump.
-- When in doubt whether time has passed, keep events in the same day.
-
-═══ Output format ═══
-For each day, provide:
-- date: the in-world date (use the most specific format available from the text)
-
-For each event within a day, provide:
+For EACH event, provide these fields:
+- date: the in-world date when this event happens (see date rules below)
 - title: short name for the event
 - location: where it happened
 - characters: who was involved
 - detail: detailed retelling — why it started, what happened, how it ended
 - consequences: what consequences followed, if any
 
-Output ONLY a valid JSON array of day objects. No commentary, no markdown fences.
+═══ How to determine the "date" field ═══
+Scan the chat for time indicators:
+- Explicit dates/timestamps (e.g., "2026/02/14", dates in horae tags like "time:2026/2/14 15:00")
+- Day transitions: sleeping/waking, "next morning", "на следующий день", time skips
+- Relative references: "three days later", "the following week"
+- Fantasy calendars: "Third Day of Frostfall Moon", festival names
+- Context: meals (breakfast=morning), sunlight/darkness
 
-Example format:
+Date rules:
+- If explicit dates exist in the text, use them exactly.
+- If no explicit date but day boundaries are clear, use "Day 1", "Day 2", etc.
+- Multiple events on the same day MUST have the same date value.
+- A new day starts ONLY at clear transitions (sleep, explicit "next day", time jump).
+- When unsure, keep events on the same day.
+
+Output ONLY a valid JSON array. No commentary, no markdown fences.
+
+Example:
 [
   {
     "date": "2026/02/14",
-    "events": [
-      {
-        "title": "Arrival at the tavern",
-        "location": "The Silver Goblet tavern",
-        "characters": "{{user}}, Elara",
-        "detail": "{{user}} entered the tavern seeking information about the missing merchant. Elara, the barmaid, recognized them and offered to help.",
-        "consequences": "Elara revealed the merchant was last seen heading toward the northern forest."
-      },
-      {
-        "title": "Bar fight",
-        "location": "The Silver Goblet tavern",
-        "characters": "{{user}}, drunk patron",
-        "detail": "A drunk patron provoked {{user}} into a confrontation. {{user}} managed to defuse the situation by buying the man a drink.",
-        "consequences": "The patron shared a rumor about bandits on the northern road."
-      }
-    ]
+    "title": "Arrival at the tavern",
+    "location": "The Silver Goblet tavern",
+    "characters": "{{user}}, Elara",
+    "detail": "{{user}} entered the tavern seeking information about the missing merchant. Elara offered to help.",
+    "consequences": "Elara revealed the merchant was last seen heading north."
+  },
+  {
+    "date": "2026/02/14",
+    "title": "Bar fight",
+    "location": "The Silver Goblet tavern",
+    "characters": "{{user}}, drunk patron",
+    "detail": "A drunk patron provoked {{user}}. {{user}} defused the situation by buying the man a drink.",
+    "consequences": "The patron shared a rumor about bandits on the northern road."
   },
   {
     "date": "2026/02/15",
-    "events": [
-      {
-        "title": "Journey to the forest",
-        "location": "Northern Forest road",
-        "characters": "{{user}}, Elara",
-        "detail": "{{user}} and Elara set out at dawn toward the northern forest following the merchant's trail.",
-        "consequences": "They found tracks leading off the main road."
-      }
-    ]
+    "title": "Journey to the forest",
+    "location": "Northern Forest road",
+    "characters": "{{user}}, Elara",
+    "detail": "{{user}} and Elara set out at dawn following the merchant's trail.",
+    "consequences": "They found tracks leading off the main road."
   }
 ]
 
-Important rules:
-- Extract ALL events, not just major ones. Include conversations, encounters, discoveries.
-- Group events by their in-world date/day. Multiple events can happen on the same day.
-- NEVER put events into different days unless there is a clear day transition in the text.
-- Write in English.
+Rules:
+- Extract ALL events, not just major ones.
+- Events on the same in-world day must share the same "date" value.
 - Do NOT use asterisks (*), only plain text.
+- Write in English.
 - Output valid JSON only.`,
 
     [GEN_CHARACTERS]: `You are analyzing a roleplay chat. Extract information about ALL characters that {{user}} has interacted with.
@@ -293,8 +281,6 @@ let isGenerating = false;
 
 // Old default prompts for migration detection — if user's saved prompt matches
 // an old default, it gets replaced with the new one automatically.
-const OLD_DEFAULT_EVENTS_SIGNATURE = "Your task is to extract ALL significant plot events from the provided chat messages";
-
 function getSettings() {
     if (!extension_settings[extensionName]) {
         extension_settings[extensionName] = {};
@@ -306,13 +292,12 @@ function getSettings() {
         }
     }
 
-    // Migrate: if the events prompt is the old default (no date-detection block), upgrade it
+    // Migrate: if the events prompt doesn't contain the date-detection block, upgrade it
     if (
         s.promptEvents &&
-        s.promptEvents.includes(OLD_DEFAULT_EVENTS_SIGNATURE) &&
-        !s.promptEvents.includes("How to determine in-world dates")
+        !s.promptEvents.includes("How to determine the")
     ) {
-        console.log(`${extensionName}: Migrating events prompt to v3 (day-detection)`);
+        console.log(`${extensionName}: Migrating events prompt to v3 (flat format with date detection)`);
         s.promptEvents = DEFAULT_PROMPTS[GEN_EVENTS];
         saveSettingsDebounced();
     }
