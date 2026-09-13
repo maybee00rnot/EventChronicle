@@ -404,6 +404,7 @@ async function generate(type) {
         };
 
         // Save
+        const mem = getChatMemory();
         const records = [...(mem.records || []), record];
         setChatMemory({ records });
 
