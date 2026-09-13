@@ -158,24 +158,53 @@ function getSettings() {
     return s;
 }
 
+/**
+ * Data is stored in chat_metadata AND in chat[0].extra for reliability.
+ * chat_metadata is per-chat (each chat = specific character), so records
+ * are automatically separated per character.
+ * We also mirror to chat[0].extra so data survives chat exports/imports.
+ */
 function getChatMemory() {
     const ctx = getContext();
-    if (!ctx.chat_metadata) return {};
-    if (!ctx.chat_metadata[extensionName]) {
-        ctx.chat_metadata[extensionName] = { records: [] };
+
+    // Primary: chat_metadata
+    if (ctx.chat_metadata) {
+        if (!ctx.chat_metadata[extensionName]) {
+            // Try to recover from chat[0].extra
+            const chat = Array.isArray(ctx.chat) ? ctx.chat : [];
+            if (chat.length > 0 && chat[0]?.extra?.[extensionName]) {
+                ctx.chat_metadata[extensionName] = chat[0].extra[extensionName];
+            } else {
+                ctx.chat_metadata[extensionName] = { records: [] };
+            }
+        }
+        return ctx.chat_metadata[extensionName];
     }
-    return ctx.chat_metadata[extensionName];
+
+    return { records: [] };
 }
 
 function setChatMemory(data) {
     const ctx = getContext();
     if (!ctx.chat_metadata) return;
+
     if (!ctx.chat_metadata[extensionName]) {
         ctx.chat_metadata[extensionName] = { records: [] };
     }
     Object.assign(ctx.chat_metadata[extensionName], data);
+
+    // Mirror to chat[0].extra for persistence across exports
+    const chat = Array.isArray(ctx.chat) ? ctx.chat : [];
+    if (chat.length > 0) {
+        if (!chat[0].extra) chat[0].extra = {};
+        chat[0].extra[extensionName] = ctx.chat_metadata[extensionName];
+    }
+
     if (ctx.saveMetadata) {
         ctx.saveMetadata();
+    }
+    if (ctx.saveChat) {
+        ctx.saveChat();
     }
 }
 
@@ -592,6 +621,23 @@ function addManualItem(recordId, type) {
     setChatMemory({ records });
     renderLibrary();
     updateContextInjection();
+
+    // Auto-expand the record and open edit form on the new item
+    const recEl = $(`.ec-record[data-record-id="${recordId}"]`);
+    if (recEl.length) {
+        const itemsDiv = recEl.find(".ec-record-items");
+        itemsDiv.show();
+        recEl.find(".ec-btn-toggle-record i")
+            .removeClass("fa-chevron-down")
+            .addClass("fa-chevron-up");
+        // Open edit form on the newly added item
+        const newItemEl = recEl.find(`.ec-item[data-item-id="${newItem.id}"]`);
+        if (newItemEl.length) {
+            newItemEl.find(".ec-item-body").hide();
+            newItemEl.find(".ec-item-edit-form").show();
+            newItemEl.find(".ec-item-actions").hide();
+        }
+    }
 }
 
 function addManualRecord(type) {
