@@ -269,14 +269,24 @@ const DEFAULT_SETTINGS = {
     rangeMode: "auto",
     rangeManualCount: 50,
     connectionProfileId: "",
+    autoUpdateEnabled: false,
+    autoUpdateEvents: 0,
+    autoUpdateCharacters: 0,
+    autoUpdatePreferences: 0,
+    autoUpdateLocations: 0,
+    autoUpdateRelationships: 0,
+    autoUpdateSecrets: 0,
     activeTab: GEN_EVENTS,
     activeLibraryTab: GEN_EVENTS,
+    activeMainTab: "settings",
 };
 
 // ---------- state ----------
 
 let currentAbortController = null;
 let isGenerating = false;
+let autoUpdateQueue = [];
+let autoUpdateProcessing = false;
 
 // ---------- helpers ----------
 
@@ -702,6 +712,67 @@ async function generate(type) {
         btn.html(originalText);
         btn.prop("disabled", false);
     }
+}
+
+// ---------- auto-update ----------
+
+function getMessagesSinceLastRecord(type) {
+    const mem = getChatMemory();
+    const records = (mem.records || []).filter((r) => r.type === type);
+    if (records.length === 0) {
+        const ctx = getContext();
+        return Array.isArray(ctx.chat) ? ctx.chat.length : 0;
+    }
+    const lastRecord = records[records.length - 1];
+    const lastTo = lastRecord.messageRange?.to ?? 0;
+    const ctx = getContext();
+    const chatLen = Array.isArray(ctx.chat) ? ctx.chat.length : 0;
+    return Math.max(0, chatLen - 1 - lastTo);
+}
+
+function checkAutoUpdate() {
+    const settings = getSettings();
+    if (!settings.autoUpdateEnabled || isGenerating) return;
+
+    const typeMap = {
+        [GEN_EVENTS]: settings.autoUpdateEvents,
+        [GEN_CHARACTERS]: settings.autoUpdateCharacters,
+        [GEN_PREFERENCES]: settings.autoUpdatePreferences,
+        [GEN_LOCATIONS]: settings.autoUpdateLocations,
+        [GEN_RELATIONSHIPS]: settings.autoUpdateRelationships,
+        [GEN_SECRETS]: settings.autoUpdateSecrets,
+    };
+
+    for (const [type, interval] of Object.entries(typeMap)) {
+        if (!interval || interval <= 0) continue;
+        const messagesSince = getMessagesSinceLastRecord(type);
+        if (messagesSince >= interval && !autoUpdateQueue.includes(type)) {
+            autoUpdateQueue.push(type);
+        }
+    }
+
+    processAutoUpdateQueue();
+}
+
+async function processAutoUpdateQueue() {
+    if (autoUpdateProcessing || isGenerating || autoUpdateQueue.length === 0) return;
+    autoUpdateProcessing = true;
+
+    while (autoUpdateQueue.length > 0 && !isGenerating) {
+        const type = autoUpdateQueue.shift();
+        console.log(`${extensionName}: Auto-generating ${type}`);
+        try {
+            await generate(type);
+        } catch (e) {
+            console.warn(`${extensionName}: Auto-update failed for ${type}`, e);
+        }
+        // Small delay between consecutive auto-generations
+        if (autoUpdateQueue.length > 0) {
+            await new Promise((r) => setTimeout(r, 2000));
+        }
+    }
+
+    autoUpdateProcessing = false;
 }
 
 // ---------- context injection ----------
@@ -1369,7 +1440,7 @@ function renderItemCard(recordId, item, type) {
             <div class="ec-item-header">
                 <span class="ec-item-title"><i class="fa-solid fa-user-secret" style="opacity:0.5; margin-right:4px;"></i>${escapeHtml(item.holder || "Unknown")}</span>
                 <div class="ec-item-actions">
-                    <span class="ec-secret-status ${statusClass}">${escapeHtml(status)}</span>
+                    <button class="ec-secret-status-btn ${statusClass}" data-record-id="${escapeHtml(recordId)}" data-item-id="${escapeHtml(item.id)}" title="Click to change status">${escapeHtml(status.toUpperCase())}</button>
                     <button class="ec-btn-icon ec-btn-edit-item" title="Edit"><i class="fa-solid fa-pencil"></i></button>
                     <button class="ec-btn-icon ec-btn-delete-item" title="Delete"><i class="fa-solid fa-trash"></i></button>
                 </div>
@@ -1417,163 +1488,222 @@ function getSettingsHtml() {
             </div>
             <div class="inline-drawer-content" style="display: none;">
 
-                <!-- Enable toggle -->
-                <div class="ec-setting-row">
-                    <label class="checkbox_label">
-                        <input type="checkbox" id="ec-enabled">
-                        <span>Enable context injection</span>
-                    </label>
-                </div>
-
-                <!-- Generation tabs -->
-                <div class="ec-tabs ec-gen-tabs">
-                    <button class="ec-tab active" data-tab="${GEN_EVENTS}">
-                        <i class="fa-solid fa-scroll"></i> Events
+                <!-- Main section tabs: Settings vs Chronicle -->
+                <div class="ec-tabs ec-main-tabs">
+                    <button class="ec-main-tab active" data-main-tab="settings">
+                        <i class="fa-solid fa-gear"></i> Settings
                     </button>
-                    <button class="ec-tab" data-tab="${GEN_CHARACTERS}">
-                        <i class="fa-solid fa-users"></i> Chars
-                    </button>
-                    <button class="ec-tab" data-tab="${GEN_PREFERENCES}">
-                        <i class="fa-solid fa-heart"></i> Prefs
-                    </button>
-                    <button class="ec-tab" data-tab="${GEN_LOCATIONS}">
-                        <i class="fa-solid fa-map-marker-alt"></i> Locs
-                    </button>
-                    <button class="ec-tab" data-tab="${GEN_RELATIONSHIPS}">
-                        <i class="fa-solid fa-project-diagram"></i> Rels
-                    </button>
-                    <button class="ec-tab" data-tab="${GEN_SECRETS}">
-                        <i class="fa-solid fa-user-secret"></i> Secrets
+                    <button class="ec-main-tab" data-main-tab="chronicle">
+                        <i class="fa-solid fa-book"></i> Chronicle
                     </button>
                 </div>
 
-                <!-- Per-tab content -->
-                <div class="ec-tab-content" data-for="${GEN_EVENTS}">
-                    <div class="ec-prompt-header"><label>Events prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_EVENTS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
-                    <textarea class="text_pole ec-prompt-input" id="ec-prompt-events" rows="6"></textarea>
-                </div>
-                <div class="ec-tab-content" data-for="${GEN_CHARACTERS}" style="display: none;">
-                    <div class="ec-prompt-header"><label>Characters prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_CHARACTERS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
-                    <textarea class="text_pole ec-prompt-input" id="ec-prompt-characters" rows="6"></textarea>
-                </div>
-                <div class="ec-tab-content" data-for="${GEN_PREFERENCES}" style="display: none;">
-                    <div class="ec-prompt-header"><label>Preferences prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_PREFERENCES}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
-                    <textarea class="text_pole ec-prompt-input" id="ec-prompt-preferences" rows="6"></textarea>
-                </div>
-                <div class="ec-tab-content" data-for="${GEN_LOCATIONS}" style="display: none;">
-                    <div class="ec-prompt-header"><label>Locations prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_LOCATIONS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
-                    <textarea class="text_pole ec-prompt-input" id="ec-prompt-locations" rows="6"></textarea>
-                </div>
-                <div class="ec-tab-content" data-for="${GEN_RELATIONSHIPS}" style="display: none;">
-                    <div class="ec-prompt-header"><label>Relationships prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_RELATIONSHIPS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
-                    <textarea class="text_pole ec-prompt-input" id="ec-prompt-relationships" rows="6"></textarea>
-                </div>
-                <div class="ec-tab-content" data-for="${GEN_SECRETS}" style="display: none;">
-                    <div class="ec-prompt-header"><label>Secrets prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_SECRETS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
-                    <textarea class="text_pole ec-prompt-input" id="ec-prompt-secrets" rows="6"></textarea>
-                </div>
+                <!-- ========== SETTINGS PANEL ========== -->
+                <div class="ec-main-panel" data-main-panel="settings">
 
-                <!-- Range settings -->
-                <div class="ec-setting-row ec-range-row">
-                    <label>Message range:</label>
-                    <select id="ec-range-mode" class="text_pole">
-                        <option value="auto">Auto (from last record)</option>
-                        <option value="manual">Last N messages</option>
-                        <option value="all">All messages</option>
-                    </select>
-                    <input type="number" id="ec-range-count" class="text_pole ec-range-count-input"
-                           min="1" value="50" placeholder="Count">
-                </div>
-
-                <!-- Generate buttons (one per type, only active one is visible) -->
-                <div class="ec-setting-row ec-gen-row">
-                    <button class="menu_button" id="ec-btn-generate-events">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Events
-                    </button>
-                    <button class="menu_button" id="ec-btn-generate-characters" style="display: none;">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Characters
-                    </button>
-                    <button class="menu_button" id="ec-btn-generate-preferences" style="display: none;">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Preferences
-                    </button>
-                    <button class="menu_button" id="ec-btn-generate-locations" style="display: none;">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Locations
-                    </button>
-                    <button class="menu_button" id="ec-btn-generate-relationships" style="display: none;">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Relationships
-                    </button>
-                    <button class="menu_button" id="ec-btn-generate-secrets" style="display: none;">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Secrets
-                    </button>
-                </div>
-
-                <!-- Injection settings -->
-                <div class="ec-setting-group">
+                    <!-- Enable toggle -->
                     <div class="ec-setting-row">
-                        <label>Injection position:</label>
-                        <select id="ec-injection-position" class="text_pole">
-                            <option value="0">Before Main Prompt</option>
-                            <option value="1">In-Chat @ Depth</option>
-                            <option value="2">After Main Prompt</option>
-                        </select>
+                        <label class="checkbox_label">
+                            <input type="checkbox" id="ec-enabled">
+                            <span>Enable context injection</span>
+                        </label>
                     </div>
-                    <div class="ec-setting-row ec-depth-row">
-                        <label>Depth:</label>
-                        <input type="number" id="ec-injection-depth" class="text_pole" min="0" value="0">
+
+                    <!-- Injection settings -->
+                    <div class="ec-setting-group">
+                        <div class="ec-setting-row" style="margin-bottom: 2px;">
+                            <b style="font-size: 0.85em; opacity: 0.7;"><i class="fa-solid fa-syringe" style="margin-right: 4px;"></i>Context Injection</b>
+                        </div>
+                        <div class="ec-setting-row">
+                            <label>Position:</label>
+                            <select id="ec-injection-position" class="text_pole">
+                                <option value="0">Before Main Prompt</option>
+                                <option value="1">In-Chat @ Depth</option>
+                                <option value="2">After Main Prompt</option>
+                            </select>
+                        </div>
+                        <div class="ec-setting-row ec-depth-row">
+                            <label>Depth:</label>
+                            <input type="number" id="ec-injection-depth" class="text_pole" min="0" value="0">
+                        </div>
+                        <div class="ec-setting-row">
+                            <label>Role:</label>
+                            <select id="ec-injection-role" class="text_pole">
+                                <option value="0">System</option>
+                                <option value="1">User</option>
+                                <option value="2">Assistant</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="ec-setting-row">
-                        <label>Role:</label>
-                        <select id="ec-injection-role" class="text_pole">
-                            <option value="0">System</option>
-                            <option value="1">User</option>
-                            <option value="2">Assistant</option>
-                        </select>
+
+                    <!-- Generation settings -->
+                    <div class="ec-setting-group">
+                        <div class="ec-setting-row" style="margin-bottom: 2px;">
+                            <b style="font-size: 0.85em; opacity: 0.7;"><i class="fa-solid fa-wand-magic-sparkles" style="margin-right: 4px;"></i>Generation</b>
+                        </div>
+                        <div class="ec-setting-row">
+                            <label>Message range:</label>
+                            <select id="ec-range-mode" class="text_pole">
+                                <option value="auto">Auto (from last record)</option>
+                                <option value="manual">Last N messages</option>
+                                <option value="all">All messages</option>
+                            </select>
+                            <input type="number" id="ec-range-count" class="text_pole ec-range-count-input"
+                                   min="1" value="50" placeholder="Count">
+                        </div>
+                        <div class="ec-setting-row">
+                            <label>API profile:</label>
+                            <select id="ec-connection-profile" class="text_pole">
+                                <option value="">Same as current</option>
+                            </select>
+                        </div>
+                        <div class="ec-setting-row" style="opacity: 0.5; font-size: 0.78em; padding-left: 4px;">
+                            Use a cheaper model for generation while keeping your main model for RP
+                        </div>
                     </div>
+
+                    <!-- Auto-update settings -->
+                    <div class="ec-setting-group">
+                        <div class="ec-setting-row" style="margin-bottom: 2px;">
+                            <b style="font-size: 0.85em; opacity: 0.7;"><i class="fa-solid fa-arrows-rotate" style="margin-right: 4px;"></i>Auto-Update</b>
+                        </div>
+                        <div class="ec-setting-row">
+                            <label class="checkbox_label">
+                                <input type="checkbox" id="ec-auto-update-enabled">
+                                <span>Enable auto-update</span>
+                            </label>
+                        </div>
+                        <div class="ec-auto-update-sections">
+                            <div class="ec-setting-row">
+                                <label><i class="fa-solid fa-scroll" style="width: 16px; text-align: center;"></i> Events every</label>
+                                <input type="number" id="ec-auto-events" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
+                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
+                            </div>
+                            <div class="ec-setting-row">
+                                <label><i class="fa-solid fa-users" style="width: 16px; text-align: center;"></i> Characters every</label>
+                                <input type="number" id="ec-auto-characters" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
+                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
+                            </div>
+                            <div class="ec-setting-row">
+                                <label><i class="fa-solid fa-heart" style="width: 16px; text-align: center;"></i> Preferences every</label>
+                                <input type="number" id="ec-auto-preferences" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
+                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
+                            </div>
+                            <div class="ec-setting-row">
+                                <label><i class="fa-solid fa-map-marker-alt" style="width: 16px; text-align: center;"></i> Locations every</label>
+                                <input type="number" id="ec-auto-locations" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
+                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
+                            </div>
+                            <div class="ec-setting-row">
+                                <label><i class="fa-solid fa-project-diagram" style="width: 16px; text-align: center;"></i> Relationships every</label>
+                                <input type="number" id="ec-auto-relationships" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
+                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
+                            </div>
+                            <div class="ec-setting-row">
+                                <label><i class="fa-solid fa-user-secret" style="width: 16px; text-align: center;"></i> Secrets every</label>
+                                <input type="number" id="ec-auto-secrets" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
+                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
 
-                <!-- Connection profile -->
-                <div class="ec-setting-group">
-                    <div class="ec-setting-row">
-                        <label>Generation profile:</label>
-                        <select id="ec-connection-profile" class="text_pole">
-                            <option value="">Same as current</option>
-                        </select>
-                    </div>
-                    <div class="ec-setting-row" style="opacity: 0.6; font-size: 0.8em;">
-                        Use a different (e.g. cheaper) API profile for generation
-                    </div>
-                </div>
+                <!-- ========== CHRONICLE PANEL ========== -->
+                <div class="ec-main-panel" data-main-panel="chronicle" style="display: none;">
 
-                <hr>
-
-                <!-- Library -->
-                <div class="ec-library-header">
-                    <b>Library</b>
-                    <div style="display: flex; gap: 4px; align-items: center;">
-                        <button class="ec-btn-icon" id="ec-btn-export" title="Export all records to JSON">
-                            <i class="fa-solid fa-file-export"></i>
+                    <!-- Generation tabs -->
+                    <div class="ec-tabs ec-gen-tabs">
+                        <button class="ec-tab active" data-tab="${GEN_EVENTS}">
+                            <i class="fa-solid fa-scroll"></i> Events
                         </button>
-                        <button class="ec-btn-icon" id="ec-btn-import" title="Import records from JSON">
-                            <i class="fa-solid fa-file-import"></i>
+                        <button class="ec-tab" data-tab="${GEN_CHARACTERS}">
+                            <i class="fa-solid fa-users"></i> Chars
                         </button>
-                        <button class="ec-btn-icon" id="ec-btn-add-record" title="Add record manually">
-                            <i class="fa-solid fa-plus"></i>
+                        <button class="ec-tab" data-tab="${GEN_PREFERENCES}">
+                            <i class="fa-solid fa-heart"></i> Prefs
+                        </button>
+                        <button class="ec-tab" data-tab="${GEN_LOCATIONS}">
+                            <i class="fa-solid fa-map-marker-alt"></i> Locs
+                        </button>
+                        <button class="ec-tab" data-tab="${GEN_RELATIONSHIPS}">
+                            <i class="fa-solid fa-project-diagram"></i> Rels
+                        </button>
+                        <button class="ec-tab" data-tab="${GEN_SECRETS}">
+                            <i class="fa-solid fa-user-secret"></i> Secrets
                         </button>
                     </div>
-                </div>
-                <input type="file" id="ec-import-file" accept=".json" style="display: none;">
 
-                <!-- Library type tabs -->
-                <div class="ec-tabs ec-lib-tabs">
-                    <button class="ec-lib-tab active" data-type="${GEN_EVENTS}"><i class="fa-solid fa-scroll"></i> Events</button>
-                    <button class="ec-lib-tab" data-type="${GEN_CHARACTERS}"><i class="fa-solid fa-users"></i> Chars</button>
-                    <button class="ec-lib-tab" data-type="${GEN_PREFERENCES}"><i class="fa-solid fa-heart"></i> Prefs</button>
-                    <button class="ec-lib-tab" data-type="${GEN_LOCATIONS}"><i class="fa-solid fa-map-marker-alt"></i> Locs</button>
-                    <button class="ec-lib-tab" data-type="${GEN_RELATIONSHIPS}"><i class="fa-solid fa-project-diagram"></i> Rels</button>
-                    <button class="ec-lib-tab" data-type="${GEN_SECRETS}"><i class="fa-solid fa-user-secret"></i> Secrets</button>
-                </div>
+                    <!-- Per-tab prompt + generate -->
+                    <div class="ec-tab-content" data-for="${GEN_EVENTS}">
+                        <div class="ec-prompt-header"><label>Events prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_EVENTS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
+                        <textarea class="text_pole ec-prompt-input" id="ec-prompt-events" rows="6"></textarea>
+                    </div>
+                    <div class="ec-tab-content" data-for="${GEN_CHARACTERS}" style="display: none;">
+                        <div class="ec-prompt-header"><label>Characters prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_CHARACTERS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
+                        <textarea class="text_pole ec-prompt-input" id="ec-prompt-characters" rows="6"></textarea>
+                    </div>
+                    <div class="ec-tab-content" data-for="${GEN_PREFERENCES}" style="display: none;">
+                        <div class="ec-prompt-header"><label>Preferences prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_PREFERENCES}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
+                        <textarea class="text_pole ec-prompt-input" id="ec-prompt-preferences" rows="6"></textarea>
+                    </div>
+                    <div class="ec-tab-content" data-for="${GEN_LOCATIONS}" style="display: none;">
+                        <div class="ec-prompt-header"><label>Locations prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_LOCATIONS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
+                        <textarea class="text_pole ec-prompt-input" id="ec-prompt-locations" rows="6"></textarea>
+                    </div>
+                    <div class="ec-tab-content" data-for="${GEN_RELATIONSHIPS}" style="display: none;">
+                        <div class="ec-prompt-header"><label>Relationships prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_RELATIONSHIPS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
+                        <textarea class="text_pole ec-prompt-input" id="ec-prompt-relationships" rows="6"></textarea>
+                    </div>
+                    <div class="ec-tab-content" data-for="${GEN_SECRETS}" style="display: none;">
+                        <div class="ec-prompt-header"><label>Secrets prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_SECRETS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
+                        <textarea class="text_pole ec-prompt-input" id="ec-prompt-secrets" rows="6"></textarea>
+                    </div>
 
-                <div id="ec-library-list" class="ec-library-list"></div>
+                    <!-- Generate buttons (one per type, only active one is visible) -->
+                    <div class="ec-setting-row ec-gen-row">
+                        <button class="menu_button" id="ec-btn-generate-events">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Events
+                        </button>
+                        <button class="menu_button" id="ec-btn-generate-characters" style="display: none;">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Characters
+                        </button>
+                        <button class="menu_button" id="ec-btn-generate-preferences" style="display: none;">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Preferences
+                        </button>
+                        <button class="menu_button" id="ec-btn-generate-locations" style="display: none;">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Locations
+                        </button>
+                        <button class="menu_button" id="ec-btn-generate-relationships" style="display: none;">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Relationships
+                        </button>
+                        <button class="menu_button" id="ec-btn-generate-secrets" style="display: none;">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Secrets
+                        </button>
+                    </div>
+
+                    <hr>
+
+                    <!-- Library -->
+                    <div class="ec-library-header">
+                        <b>Library</b>
+                        <div style="display: flex; gap: 4px; align-items: center;">
+                            <button class="ec-btn-icon" id="ec-btn-export" title="Export all records to JSON">
+                                <i class="fa-solid fa-file-export"></i>
+                            </button>
+                            <button class="ec-btn-icon" id="ec-btn-import" title="Import records from JSON">
+                                <i class="fa-solid fa-file-import"></i>
+                            </button>
+                            <button class="ec-btn-icon" id="ec-btn-add-record" title="Add record manually">
+                                <i class="fa-solid fa-plus"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <input type="file" id="ec-import-file" accept=".json" style="display: none;">
+
+                    <div id="ec-library-list" class="ec-library-list"></div>
+
+                </div>
 
             </div>
         </div>
@@ -1594,7 +1724,19 @@ function bindEventHandlers() {
             updateContextInjection();
         });
 
-    // Generation tabs
+    // Main section tabs (Settings / Chronicle)
+    $(document).on("click", ".ec-main-tabs .ec-main-tab", function () {
+        const tab = $(this).data("main-tab");
+        $(".ec-main-tabs .ec-main-tab").removeClass("active");
+        $(this).addClass("active");
+        $(".ec-main-panel").hide();
+        $(`.ec-main-panel[data-main-panel="${tab}"]`).show();
+        settings.activeMainTab = tab;
+        saveSettingsDebounced();
+        if (tab === "chronicle") renderLibrary();
+    });
+
+    // Generation tabs (also switches library view)
     $(document).on("click", ".ec-gen-tabs .ec-tab", function () {
         const tab = $(this).data("tab");
         $(".ec-gen-tabs .ec-tab").removeClass("active");
@@ -1604,15 +1746,7 @@ function bindEventHandlers() {
         $('[id^="ec-btn-generate-"]').hide();
         $(`#ec-btn-generate-${tab}`).show();
         settings.activeTab = tab;
-        saveSettingsDebounced();
-    });
-
-    // Library type tabs
-    $(document).on("click", ".ec-lib-tabs .ec-lib-tab", function () {
-        const type = $(this).data("type");
-        $(".ec-lib-tabs .ec-lib-tab").removeClass("active");
-        $(this).addClass("active");
-        settings.activeLibraryTab = type;
+        settings.activeLibraryTab = tab;
         saveSettingsDebounced();
         renderLibrary();
     });
@@ -1714,6 +1848,31 @@ function bindEventHandlers() {
         settings.connectionProfileId = $(this).val() || "";
         saveSettingsDebounced();
     });
+
+    // Auto-update settings
+    $("#ec-auto-update-enabled").on("change", function () {
+        settings.autoUpdateEnabled = $(this).prop("checked");
+        $(".ec-auto-update-sections").toggle(settings.autoUpdateEnabled);
+        saveSettingsDebounced();
+    });
+    $(".ec-auto-update-sections").toggle(!!settings.autoUpdateEnabled);
+
+    const autoFields = {
+        "#ec-auto-events": "autoUpdateEvents",
+        "#ec-auto-characters": "autoUpdateCharacters",
+        "#ec-auto-preferences": "autoUpdatePreferences",
+        "#ec-auto-locations": "autoUpdateLocations",
+        "#ec-auto-relationships": "autoUpdateRelationships",
+        "#ec-auto-secrets": "autoUpdateSecrets",
+    };
+    for (const [sel, key] of Object.entries(autoFields)) {
+        $(sel)
+            .val(settings[key] || 0)
+            .on("change", function () {
+                settings[key] = parseInt($(this).val()) || 0;
+                saveSettingsDebounced();
+            });
+    }
 
     // Generate buttons
     $(document).on("click", "#ec-btn-generate-events", () => generate(GEN_EVENTS));
@@ -1876,6 +2035,28 @@ function bindEventHandlers() {
         renderLibrary();
     });
 
+    // Cycle secret status on badge click
+    $(document).on("click", ".ec-secret-status-btn", function (e) {
+        e.stopPropagation();
+        const btn = $(this);
+        const recordId = btn.data("record-id");
+        const itemId = btn.data("item-id");
+        const cycle = ["hidden", "suspected", "revealed"];
+        const current = btn.hasClass("status-hidden") ? "hidden"
+            : btn.hasClass("status-suspected") ? "suspected" : "revealed";
+        const nextIdx = (cycle.indexOf(current) + 1) % cycle.length;
+        const next = cycle[nextIdx];
+
+        updateItem(recordId, itemId, { status: next });
+
+        // Update badge in-place without full re-render
+        btn.removeClass("status-hidden status-suspected status-revealed")
+           .addClass(`status-${next}`)
+           .text(next.toUpperCase());
+
+        updateContextInjection();
+    });
+
     // Initialize UI state
     $(".ec-range-count-input").toggle(settings.rangeMode === "manual");
     $(".ec-depth-row").toggle(parseInt(settings.injectionPosition) === 1);
@@ -1899,6 +2080,23 @@ function loadSettingsUI() {
     // Connection profile
     updateProfilesList();
 
+    // Auto-update
+    $("#ec-auto-update-enabled").prop("checked", settings.autoUpdateEnabled);
+    $("#ec-auto-events").val(settings.autoUpdateEvents || 0);
+    $("#ec-auto-characters").val(settings.autoUpdateCharacters || 0);
+    $("#ec-auto-preferences").val(settings.autoUpdatePreferences || 0);
+    $("#ec-auto-locations").val(settings.autoUpdateLocations || 0);
+    $("#ec-auto-relationships").val(settings.autoUpdateRelationships || 0);
+    $("#ec-auto-secrets").val(settings.autoUpdateSecrets || 0);
+    $(".ec-auto-update-sections").toggle(!!settings.autoUpdateEnabled);
+
+    // Activate the right main tab
+    const activeMainTab = settings.activeMainTab || "settings";
+    $(".ec-main-tabs .ec-main-tab").removeClass("active");
+    $(`.ec-main-tabs .ec-main-tab[data-main-tab="${activeMainTab}"]`).addClass("active");
+    $(".ec-main-panel").hide();
+    $(`.ec-main-panel[data-main-panel="${activeMainTab}"]`).show();
+
     // Activate the right gen tab
     const activeTab = settings.activeTab || GEN_EVENTS;
     $(".ec-gen-tabs .ec-tab").removeClass("active");
@@ -1907,11 +2105,6 @@ function loadSettingsUI() {
     $(`.ec-tab-content[data-for="${activeTab}"]`).show();
     $('[id^="ec-btn-generate-"]').hide();
     $(`#ec-btn-generate-${activeTab}`).show();
-
-    // Activate the right lib tab
-    const activeLibTab = settings.activeLibraryTab || GEN_EVENTS;
-    $(".ec-lib-tabs .ec-lib-tab").removeClass("active");
-    $(`.ec-lib-tabs .ec-lib-tab[data-type="${activeLibTab}"]`).addClass("active");
 }
 
 // ---------- initialization ----------
@@ -1931,6 +2124,7 @@ jQuery(async () => {
 
     eventSource.on(event_types.MESSAGE_RECEIVED, () => {
         updateContextInjection();
+        checkAutoUpdate();
     });
 
     eventSource.on(event_types.MESSAGE_SENT, () => {
