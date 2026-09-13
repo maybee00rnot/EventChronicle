@@ -589,34 +589,13 @@ function addManualItem(recordId, type) {
     const mem = getChatMemory();
     const records = mem.records || [];
     const rec = records.find((r) => r.id === recordId);
-    if (!rec) return;
-
-    let newItem;
-    if (type === GEN_EVENTS) {
-        newItem = {
-            id: `evt-${uid()}`,
-            title: "New Event",
-            location: "",
-            characters: "",
-            detail: "",
-            consequences: "",
-        };
-    } else if (type === GEN_CHARACTERS) {
-        newItem = {
-            id: `evt-${uid()}`,
-            name: "New Character",
-            appearance: "",
-            relationship: "",
-            personality: "",
-        };
-    } else {
-        newItem = {
-            id: `evt-${uid()}`,
-            name: "Character Name",
-            preferences: "",
-        };
+    if (!rec) {
+        console.warn(`${extensionName}: addManualItem — record ${recordId} not found`);
+        toastr.warning("Record not found");
+        return;
     }
 
+    const newItem = createBlankItem(type);
     rec.items.push(newItem);
     setChatMemory({ records });
     renderLibrary();
@@ -630,7 +609,6 @@ function addManualItem(recordId, type) {
         recEl.find(".ec-btn-toggle-record i")
             .removeClass("fa-chevron-down")
             .addClass("fa-chevron-up");
-        // Open edit form on the newly added item
         const newItemEl = recEl.find(`.ec-item[data-item-id="${newItem.id}"]`);
         if (newItemEl.length) {
             newItemEl.find(".ec-item-body").hide();
@@ -641,20 +619,68 @@ function addManualItem(recordId, type) {
 }
 
 function addManualRecord(type) {
+    console.log(`${extensionName}: addManualRecord called, type=${type}`);
     const mem = getChatMemory();
+    console.log(`${extensionName}: getChatMemory returned`, JSON.stringify(mem).substring(0, 200));
     const chatLength = getAbsoluteChatLength();
+    console.log(`${extensionName}: chatLength=${chatLength}`);
+
+    const newItem = createBlankItem(type);
     const record = {
         id: `rec-${uid()}`,
         type,
         messageRange: { from: 0, to: Math.max(0, chatLength - 1) },
         createdAt: Date.now(),
-        items: [],
+        items: [newItem],
     };
     const records = [...(mem.records || []), record];
     setChatMemory({ records });
+    renderLibrary();
+    updateContextInjection();
 
-    // Immediately add one empty item
-    addManualItem(record.id, type);
+    // Auto-expand the new record and open edit form
+    const recEl = $(`.ec-record[data-record-id="${record.id}"]`);
+    console.log(`${extensionName}: recEl found:`, recEl.length);
+    if (recEl.length) {
+        const itemsDiv = recEl.find(".ec-record-items");
+        itemsDiv.show();
+        recEl.find(".ec-btn-toggle-record i")
+            .removeClass("fa-chevron-down")
+            .addClass("fa-chevron-up");
+        const newItemEl = recEl.find(`.ec-item[data-item-id="${newItem.id}"]`);
+        if (newItemEl.length) {
+            newItemEl.find(".ec-item-body").hide();
+            newItemEl.find(".ec-item-edit-form").show();
+            newItemEl.find(".ec-item-actions").hide();
+        }
+    }
+}
+
+function createBlankItem(type) {
+    if (type === GEN_EVENTS) {
+        return {
+            id: `evt-${uid()}`,
+            title: "New Event",
+            location: "",
+            characters: "",
+            detail: "",
+            consequences: "",
+        };
+    } else if (type === GEN_CHARACTERS) {
+        return {
+            id: `evt-${uid()}`,
+            name: "New Character",
+            appearance: "",
+            relationship: "",
+            personality: "",
+        };
+    } else {
+        return {
+            id: `evt-${uid()}`,
+            name: "Character Name",
+            preferences: "",
+        };
+    }
 }
 
 // ---------- UI rendering ----------
@@ -1061,9 +1087,17 @@ function bindEventHandlers() {
     });
 
     // Add new record manually
-    $(document).on("click", "#ec-btn-add-record", function () {
-        const type = settings.activeLibraryTab || GEN_EVENTS;
-        addManualRecord(type);
+    $(document).on("click", "#ec-btn-add-record", function (e) {
+        e.stopPropagation();
+        try {
+            const type = settings.activeLibraryTab || GEN_EVENTS;
+            console.log(`${extensionName}: addManualRecord clicked, type=${type}`);
+            addManualRecord(type);
+            toastr.success("Record added");
+        } catch (err) {
+            console.error(`${extensionName}: addManualRecord error`, err);
+            toastr.error(`Error adding record: ${err.message}`);
+        }
     });
 
     // Delete item
