@@ -1,13 +1,12 @@
 /**
  * EventChronicle — Structured event-based summary extension for SillyTavern.
  *
- * Six generation types:
+ * Five generation types:
  *   1. Events        — plot events grouped by in-world day
  *   2. Characters    — character profiles
- *   3. Preferences   — adult character preferences (18+)
- *   4. Locations     — scene/location memory for world consistency
- *   5. Relationships — relationship network between all characters
- *   6. Secrets      — character secrets with status tracking
+ *   3. Locations     — scene/location memory for world consistency
+ *   4. Relationships — relationship network between all characters
+ *   5. Secrets      — character secrets with status tracking
  *
  * Data lives in chat[0].extra.EventChronicle (per-character storage).
  */
@@ -130,28 +129,6 @@ Important rules:
 - Write in English.
 - Output valid JSON only.`,
 
-    [GEN_PREFERENCES]: `You are analyzing a roleplay chat involving adult fictional characters (18+). Based on their descriptions, personalities, and actions in the plot, extract the sexual preferences and fetishes of each adult character.
-
-For each character, provide:
-- name: character's name
-- preferences: list of observed or implied preferences/fetishes based on the text
-
-Output ONLY a valid JSON array. No commentary, no markdown fences.
-
-Example format:
-[
-  {
-    "name": "Character Name",
-    "preferences": "Description of preferences based on the text"
-  }
-]
-
-Important rules:
-- Only include adult characters.
-- Base everything on what's actually in the text.
-- Write in English.
-- Output valid JSON only.`,
-
     [GEN_LOCATIONS]: `You are analyzing a roleplay chat. Extract information about ALL locations/places that appear or are described in the chat.
 
 For each location, provide:
@@ -252,6 +229,121 @@ Important rules:
 - Output valid JSON only.`,
 };
 
+// Update prompts — used when records already exist for a type.
+// The existing records are injected automatically before the chat messages.
+const DEFAULT_UPDATE_PROMPTS = {
+    [GEN_EVENTS]: `You are a skilled reteller of roleplay events. You are UPDATING an existing event chronicle.
+
+Below you will see EXISTING RECORDS — events already extracted from earlier parts of the story.
+Then you will see NEW CHAT MESSAGES that continue the story.
+
+Your task:
+1. Extract ALL new events from the NEW messages.
+2. If an existing event's consequences or details have CHANGED or been EXPANDED by new messages, output the updated version with the same title and date.
+3. Do NOT repeat existing events that have not changed.
+4. For new events, follow the same format.
+
+For EACH event (new or updated), provide:
+- date: the in-world date (see date rules in existing records' style)
+- title: short name
+- location, characters, detail, consequences
+
+Output ONLY a valid JSON array. No commentary, no markdown fences.
+Rules:
+- Do NOT output events that already exist unchanged.
+- If updating an existing event, use the SAME title so it can be matched.
+- Write in English.
+- Output valid JSON only.`,
+
+    [GEN_CHARACTERS]: `You are analyzing a roleplay chat. You are UPDATING an existing character database.
+
+Below you will see EXISTING CHARACTER PROFILES already extracted.
+Then you will see NEW CHAT MESSAGES.
+
+Your task:
+1. For EXISTING characters whose information has CHANGED or been EXPANDED in the new messages — output their FULL updated profile.
+2. For NEW characters that appear in the new messages but are NOT in the existing list — add their full profile.
+3. Do NOT output characters whose profiles have NOT changed.
+
+For each character, provide:
+- name: character's name (MUST match the existing name exactly for updates)
+- appearance, relationship, personality
+
+Output ONLY a valid JSON array. No commentary, no markdown fences.
+Rules:
+- Use the EXACT same name as the existing entry for updates.
+- Only output characters that are new or changed.
+- Write in English.
+- Output valid JSON only.`,
+
+    [GEN_LOCATIONS]: `You are analyzing a roleplay chat. You are UPDATING an existing location database.
+
+Below you will see EXISTING LOCATIONS already extracted.
+Then you will see NEW CHAT MESSAGES.
+
+Your task:
+1. For EXISTING locations whose permanent features have CHANGED or been EXPANDED — output their FULL updated entry.
+2. For NEW locations that appear in the new messages but are NOT in the existing list — add their full entry.
+3. Do NOT output locations that have NOT changed.
+
+For each location, provide:
+- name: location name (use · separator for hierarchy, MUST match existing name exactly for updates)
+- description: PERMANENT physical features only
+- parentLocation: parent location name or empty string
+
+Output ONLY a valid JSON array. No commentary, no markdown fences.
+Rules:
+- Use the EXACT same name as the existing entry for updates.
+- Only permanent physical features, no weather/mood/crowds.
+- Write in English.
+- Output valid JSON only.`,
+
+    [GEN_RELATIONSHIPS]: `You are analyzing a roleplay chat. You are UPDATING an existing relationship network.
+
+Below you will see EXISTING RELATIONSHIPS already extracted.
+Then you will see NEW CHAT MESSAGES.
+
+Your task:
+1. For EXISTING relationships that have CHANGED — output the FULL updated entry.
+2. For NEW relationships that appear in the new messages — add them.
+3. Do NOT output relationships that have NOT changed.
+
+For each relationship, provide:
+- character1, character2: names (MUST match existing names for updates)
+- type: relationship type
+- details: specifics
+
+Output ONLY a valid JSON array. No commentary, no markdown fences.
+Rules:
+- Use EXACT same character names as existing entries for updates.
+- Only output new or changed relationships.
+- Write in English.
+- Output valid JSON only.`,
+
+    [GEN_SECRETS]: `You are analyzing a roleplay chat. You are UPDATING an existing secrets tracker.
+
+Below you will see EXISTING SECRETS already tracked.
+Then you will see NEW CHAT MESSAGES.
+
+Your task:
+1. For EXISTING secrets whose status, knownBy, or hints have CHANGED — output the FULL updated entry.
+2. For NEW secrets discovered in the new messages — add them.
+3. Do NOT output secrets that have NOT changed.
+
+For each secret, provide:
+- holder: character name (MUST match existing name for updates)
+- secret: what the secret is (MUST match existing text for updates, or write new for new secrets)
+- knownBy, status (hidden/suspected/revealed), hints
+
+Output ONLY a valid JSON array. No commentary, no markdown fences.
+Rules:
+- Use EXACT same holder name for updates.
+- If a secret was revealed, change status to "revealed".
+- Only output new or changed secrets.
+- Write in English.
+- Output valid JSON only.`,
+};
+
 // ---------- default settings ----------
 
 const DEFAULT_SETTINGS = {
@@ -262,7 +354,6 @@ const DEFAULT_SETTINGS = {
     scanWI: true,
     promptEvents: DEFAULT_PROMPTS[GEN_EVENTS],
     promptCharacters: DEFAULT_PROMPTS[GEN_CHARACTERS],
-    promptPreferences: DEFAULT_PROMPTS[GEN_PREFERENCES],
     promptLocations: DEFAULT_PROMPTS[GEN_LOCATIONS],
     promptRelationships: DEFAULT_PROMPTS[GEN_RELATIONSHIPS],
     promptSecrets: DEFAULT_PROMPTS[GEN_SECRETS],
@@ -272,7 +363,6 @@ const DEFAULT_SETTINGS = {
     autoUpdateEnabled: false,
     autoUpdateEvents: 0,
     autoUpdateCharacters: 0,
-    autoUpdatePreferences: 0,
     autoUpdateLocations: 0,
     autoUpdateRelationships: 0,
     autoUpdateSecrets: 0,
@@ -552,6 +642,110 @@ function collectMessages(type, mode, manualCount) {
 
 // ---------- generation ----------
 
+/**
+ * Collect all items of a given type across all records.
+ */
+function getAllItemsOfType(type) {
+    const mem = getChatMemory();
+    const records = (mem.records || [])
+        .filter((r) => r.type === type)
+        .sort((a, b) => (a.messageRange?.from || 0) - (b.messageRange?.from || 0));
+    const items = [];
+    for (const rec of records) {
+        for (const item of rec.items || []) {
+            items.push({ ...item, _recordId: rec.id });
+        }
+    }
+    return items;
+}
+
+/**
+ * Build a JSON-like context block of existing records for the update prompt.
+ */
+function buildExistingRecordsContext(type) {
+    const items = getAllItemsOfType(type);
+    if (items.length === 0) return "";
+
+    // Strip internal fields before showing to AI
+    const cleaned = items.map((item) => {
+        const copy = { ...item };
+        delete copy.id;
+        delete copy._recordId;
+        return copy;
+    });
+
+    return JSON.stringify(cleaned, null, 2);
+}
+
+/**
+ * Get the match key for an item based on its type.
+ * Used for smart merge — matching AI output to existing items.
+ */
+function getMatchKey(type, item) {
+    if (!item) return null;
+    if (type === GEN_EVENTS) {
+        const title = String(item.title || "").trim().toLowerCase();
+        const date = String(item.date || "").trim().toLowerCase();
+        return title ? `${title}||${date}` : null;
+    }
+    if (type === GEN_CHARACTERS) {
+        return String(item.name || "").trim().toLowerCase() || null;
+    }
+    if (type === GEN_LOCATIONS) {
+        return String(item.name || "").trim().toLowerCase() || null;
+    }
+    if (type === GEN_RELATIONSHIPS) {
+        const c1 = String(item.character1 || "").trim().toLowerCase();
+        const c2 = String(item.character2 || "").trim().toLowerCase();
+        // Normalize order so A→B matches B→A
+        return c1 && c2 ? [c1, c2].sort().join("||") : null;
+    }
+    if (type === GEN_SECRETS) {
+        const holder = String(item.holder || "").trim().toLowerCase();
+        const secret = String(item.secret || "").trim().toLowerCase().slice(0, 80);
+        return holder ? `${holder}||${secret}` : null;
+    }
+    return null;
+}
+
+/**
+ * Smart merge: match AI output items to existing records by key field.
+ * Updates matched items in-place, returns truly new items.
+ */
+function smartMerge(type, newItems) {
+    const existingItems = getAllItemsOfType(type);
+    if (existingItems.length === 0) {
+        // No existing items — everything is new
+        return { updatedCount: 0, newItems };
+    }
+
+    // Build a map of existing items by match key
+    const existingMap = new Map();
+    for (const item of existingItems) {
+        const key = getMatchKey(type, item);
+        if (key) existingMap.set(key, item);
+    }
+
+    const trulyNew = [];
+    let updatedCount = 0;
+
+    for (const newItem of newItems) {
+        const key = getMatchKey(type, newItem);
+        const existing = key ? existingMap.get(key) : null;
+
+        if (existing) {
+            // Update existing item in-place (keep id and _recordId)
+            const { id: _id, _recordId, ...updateFields } = newItem;
+            updateItem(existing._recordId, existing.id, updateFields);
+            updatedCount++;
+        } else {
+            trulyNew.push(newItem);
+        }
+    }
+
+    return { updatedCount, newItems: trulyNew };
+}
+
 async function generate(type) {
     if (isGenerating) {
         toastr.warning("Generation already in progress");
@@ -590,19 +784,27 @@ async function generate(type) {
             .map((m) => `${m.name}: ${m.text}`)
             .join("\n\n");
 
+        // Check if records already exist for this type → use update prompt
+        const existingRecordsContext = buildExistingRecordsContext(type);
+        const isUpdateMode = existingRecordsContext.length > 0;
+
         let prompt;
-        if (type === GEN_EVENTS) {
-            prompt = settings.promptEvents || DEFAULT_PROMPTS[GEN_EVENTS];
-        } else if (type === GEN_CHARACTERS) {
-            prompt = settings.promptCharacters || DEFAULT_PROMPTS[GEN_CHARACTERS];
-        } else if (type === GEN_PREFERENCES) {
-            prompt = settings.promptPreferences || DEFAULT_PROMPTS[GEN_PREFERENCES];
-        } else if (type === GEN_LOCATIONS) {
-            prompt = settings.promptLocations || DEFAULT_PROMPTS[GEN_LOCATIONS];
-        } else if (type === GEN_RELATIONSHIPS) {
-            prompt = settings.promptRelationships || DEFAULT_PROMPTS[GEN_RELATIONSHIPS];
+        if (isUpdateMode) {
+            // Use update prompt for types with existing records
+            prompt = DEFAULT_UPDATE_PROMPTS[type] || DEFAULT_PROMPTS[type];
         } else {
-            prompt = settings.promptSecrets || DEFAULT_PROMPTS[GEN_SECRETS];
+            // Use initial prompt (user-customizable)
+            if (type === GEN_EVENTS) {
+                prompt = settings.promptEvents || DEFAULT_PROMPTS[GEN_EVENTS];
+            } else if (type === GEN_CHARACTERS) {
+                prompt = settings.promptCharacters || DEFAULT_PROMPTS[GEN_CHARACTERS];
+            } else if (type === GEN_LOCATIONS) {
+                prompt = settings.promptLocations || DEFAULT_PROMPTS[GEN_LOCATIONS];
+            } else if (type === GEN_RELATIONSHIPS) {
+                prompt = settings.promptRelationships || DEFAULT_PROMPTS[GEN_RELATIONSHIPS];
+            } else {
+                prompt = settings.promptSecrets || DEFAULT_PROMPTS[GEN_SECRETS];
+            }
         }
 
         const ctx = getContext();
@@ -611,7 +813,13 @@ async function generate(type) {
         prompt = prompt.replace(/\{\{user\}\}/gi, userName).replace(/\{\{char\}\}/gi, charName);
 
         let fullPrompt = prompt + "\n\n";
-        fullPrompt += `CHAT MESSAGES (messages ${fromIdx + 1} to ${toIdx + 1}):\n${chatText}`;
+
+        // In update mode, inject existing records before chat messages
+        if (isUpdateMode) {
+            fullPrompt += `EXISTING RECORDS:\n${existingRecordsContext}\n\n`;
+        }
+
+        fullPrompt += `${isUpdateMode ? "NEW " : ""}CHAT MESSAGES (messages ${fromIdx + 1} to ${toIdx + 1}):\n${chatText}`;
 
         const prefill =
             "Here is the extracted information as a valid JSON array:\n[";
@@ -635,59 +843,84 @@ async function generate(type) {
             return;
         }
 
-        // Build record items
-        let items;
-        let totalCount;
+        // Build record items from AI response
+        let parsedItems;
 
         if (type === GEN_EVENTS) {
-            // AI returns array of {date, events[]} or flat array of events
-            items = [];
+            parsedItems = [];
             if (parsed.length > 0 && parsed[0].events && Array.isArray(parsed[0].events)) {
-                // Grouped by day format
                 for (const day of parsed) {
                     const date = day.date || "Unknown";
                     for (const ev of day.events || []) {
-                        items.push({ id: `evt-${uid()}`, date, ...ev });
+                        parsedItems.push({ id: `evt-${uid()}`, date, ...ev });
                     }
                 }
             } else {
-                // Flat format (fallback)
                 for (const ev of parsed) {
-                    items.push({ id: `evt-${uid()}`, date: ev.date || "Unknown", ...ev });
+                    parsedItems.push({ id: `evt-${uid()}`, date: ev.date || "Unknown", ...ev });
                 }
             }
-            totalCount = items.length;
         } else {
-            items = parsed.map((item) => ({
+            parsedItems = parsed.map((item) => ({
                 id: `evt-${uid()}`,
                 ...item,
             }));
-            totalCount = items.length;
         }
 
-        const record = {
-            id: `rec-${uid()}`,
-            type,
-            messageRange: { from: fromIdx, to: toIdx },
-            createdAt: Date.now(),
-            items,
-        };
+        // Smart merge: in update mode, match to existing items first
+        let newCount = 0;
+        let updatedCount = 0;
 
-        const mem = getChatMemory();
-        const records = [...(mem.records || []), record];
-        setChatMemory({ records });
+        if (isUpdateMode && parsedItems.length > 0) {
+            const mergeResult = smartMerge(type, parsedItems);
+            updatedCount = mergeResult.updatedCount;
+            const trulyNewItems = mergeResult.newItems;
+            newCount = trulyNewItems.length;
+
+            // Only create a new record if there are truly new items
+            if (trulyNewItems.length > 0) {
+                const record = {
+                    id: `rec-${uid()}`,
+                    type,
+                    messageRange: { from: fromIdx, to: toIdx },
+                    createdAt: Date.now(),
+                    items: trulyNewItems,
+                };
+                const mem = getChatMemory();
+                const records = [...(mem.records || []), record];
+                setChatMemory({ records });
+            }
+        } else {
+            // First generation — create record with all items
+            newCount = parsedItems.length;
+            const record = {
+                id: `rec-${uid()}`,
+                type,
+                messageRange: { from: fromIdx, to: toIdx },
+                createdAt: Date.now(),
+                items: parsedItems,
+            };
+            const mem = getChatMemory();
+            const records = [...(mem.records || []), record];
+            setChatMemory({ records });
+        }
 
         const typeLabel = {
             [GEN_EVENTS]: "events",
             [GEN_CHARACTERS]: "characters",
-            [GEN_PREFERENCES]: "preferences",
             [GEN_LOCATIONS]: "locations",
             [GEN_RELATIONSHIPS]: "relationships",
             [GEN_SECRETS]: "secrets",
         }[type] || type;
 
+        // Build a descriptive toast message
+        const parts = [];
+        if (newCount > 0) parts.push(`${newCount} new`);
+        if (updatedCount > 0) parts.push(`${updatedCount} updated`);
+        const summary = parts.join(", ");
+
         toastr.success(
-            `Generated ${totalCount} ${typeLabel} from messages ${fromIdx + 1}–${toIdx + 1}`,
+            `${typeLabel}: ${summary} (messages ${fromIdx + 1}–${toIdx + 1})`,
         );
 
         renderLibrary();
@@ -737,7 +970,6 @@ function checkAutoUpdate() {
     const typeMap = {
         [GEN_EVENTS]: settings.autoUpdateEvents,
         [GEN_CHARACTERS]: settings.autoUpdateCharacters,
-        [GEN_PREFERENCES]: settings.autoUpdatePreferences,
         [GEN_LOCATIONS]: settings.autoUpdateLocations,
         [GEN_RELATIONSHIPS]: settings.autoUpdateRelationships,
         [GEN_SECRETS]: settings.autoUpdateSecrets,
@@ -894,7 +1126,6 @@ function updateContextInjection() {
 
     const eventText = buildInjectionTextForType(GEN_EVENTS);
     const charText = buildInjectionTextForType(GEN_CHARACTERS);
-    const prefText = buildInjectionTextForType(GEN_PREFERENCES);
     const locText = buildInjectionTextForType(GEN_LOCATIONS);
     const relText = buildInjectionTextForType(GEN_RELATIONSHIPS);
     const secText = buildInjectionTextForType(GEN_SECRETS);
@@ -902,7 +1133,6 @@ function updateContextInjection() {
     const sections = [];
     if (eventText) sections.push(`<story_events>\n${eventText}\n</story_events>`);
     if (charText) sections.push(`<character_profiles>\n${charText}\n</character_profiles>`);
-    if (prefText) sections.push(`<character_preferences>\n${prefText}\n</character_preferences>`);
     if (locText) sections.push(`<story_locations>\n${locText}\n</story_locations>`);
     if (relText) sections.push(`<character_relationships>\n${relText}\n</character_relationships>`);
     if (secText) sections.push(`<character_secrets>\n${secText}\n</character_secrets>`);
@@ -979,12 +1209,6 @@ function createBlankItem(type, extraData = {}) {
             appearance: "",
             relationship: "",
             personality: "",
-        };
-    } else if (type === GEN_PREFERENCES) {
-        return {
-            id: `evt-${uid()}`,
-            name: "Character Name",
-            preferences: "",
         };
     } else if (type === GEN_LOCATIONS) {
         return {
@@ -1576,7 +1800,6 @@ function getSettingsHtml() {
                         <div class="ec-auto-update-sections">
                             <div class="ec-auto-row"><i class="fa-solid fa-scroll"></i><span class="ec-auto-label">Events</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-events" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
                             <div class="ec-auto-row"><i class="fa-solid fa-users"></i><span class="ec-auto-label">Characters</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-characters" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
-                            <div class="ec-auto-row"><i class="fa-solid fa-heart"></i><span class="ec-auto-label">Preferences</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-preferences" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
                             <div class="ec-auto-row"><i class="fa-solid fa-map-marker-alt"></i><span class="ec-auto-label">Locations</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-locations" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
                             <div class="ec-auto-row"><i class="fa-solid fa-project-diagram"></i><span class="ec-auto-label">Relationships</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-relationships" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
                             <div class="ec-auto-row"><i class="fa-solid fa-user-secret"></i><span class="ec-auto-label">Secrets</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-secrets" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
@@ -1596,9 +1819,6 @@ function getSettingsHtml() {
                         </button>
                         <button class="ec-tab" data-tab="${GEN_CHARACTERS}">
                             <i class="fa-solid fa-users"></i> Chars
-                        </button>
-                        <button class="ec-tab" data-tab="${GEN_PREFERENCES}">
-                            <i class="fa-solid fa-heart"></i> Prefs
                         </button>
                         <button class="ec-tab" data-tab="${GEN_LOCATIONS}">
                             <i class="fa-solid fa-map-marker-alt"></i> Locs
@@ -1620,10 +1840,6 @@ function getSettingsHtml() {
                         <div class="ec-prompt-header"><label>Characters prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_CHARACTERS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
                         <textarea class="text_pole ec-prompt-input" id="ec-prompt-characters" rows="6"></textarea>
                     </div>
-                    <div class="ec-tab-content" data-for="${GEN_PREFERENCES}" style="display: none;">
-                        <div class="ec-prompt-header"><label>Preferences prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_PREFERENCES}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
-                        <textarea class="text_pole ec-prompt-input" id="ec-prompt-preferences" rows="6"></textarea>
-                    </div>
                     <div class="ec-tab-content" data-for="${GEN_LOCATIONS}" style="display: none;">
                         <div class="ec-prompt-header"><label>Locations prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_LOCATIONS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
                         <textarea class="text_pole ec-prompt-input" id="ec-prompt-locations" rows="6"></textarea>
@@ -1644,9 +1860,6 @@ function getSettingsHtml() {
                         </button>
                         <button class="menu_button" id="ec-btn-generate-characters" style="display: none;">
                             <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Characters
-                        </button>
-                        <button class="menu_button" id="ec-btn-generate-preferences" style="display: none;">
-                            <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Preferences
                         </button>
                         <button class="menu_button" id="ec-btn-generate-locations" style="display: none;">
                             <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Locations
@@ -1737,10 +1950,6 @@ function bindEventHandlers() {
         settings.promptCharacters = $(this).val();
         saveSettingsDebounced();
     });
-    $(document).on("input", "#ec-prompt-preferences", function () {
-        settings.promptPreferences = $(this).val();
-        saveSettingsDebounced();
-    });
     $(document).on("input", "#ec-prompt-locations", function () {
         settings.promptLocations = $(this).val();
         saveSettingsDebounced();
@@ -1762,7 +1971,6 @@ function bindEventHandlers() {
         const promptMap = {
             [GEN_EVENTS]: { key: "promptEvents", el: "#ec-prompt-events" },
             [GEN_CHARACTERS]: { key: "promptCharacters", el: "#ec-prompt-characters" },
-            [GEN_PREFERENCES]: { key: "promptPreferences", el: "#ec-prompt-preferences" },
             [GEN_LOCATIONS]: { key: "promptLocations", el: "#ec-prompt-locations" },
             [GEN_RELATIONSHIPS]: { key: "promptRelationships", el: "#ec-prompt-relationships" },
             [GEN_SECRETS]: { key: "promptSecrets", el: "#ec-prompt-secrets" },
@@ -1837,7 +2045,6 @@ function bindEventHandlers() {
     const autoFields = {
         "#ec-auto-events": "autoUpdateEvents",
         "#ec-auto-characters": "autoUpdateCharacters",
-        "#ec-auto-preferences": "autoUpdatePreferences",
         "#ec-auto-locations": "autoUpdateLocations",
         "#ec-auto-relationships": "autoUpdateRelationships",
         "#ec-auto-secrets": "autoUpdateSecrets",
@@ -1854,7 +2061,6 @@ function bindEventHandlers() {
     // Generate buttons
     $(document).on("click", "#ec-btn-generate-events", () => generate(GEN_EVENTS));
     $(document).on("click", "#ec-btn-generate-characters", () => generate(GEN_CHARACTERS));
-    $(document).on("click", "#ec-btn-generate-preferences", () => generate(GEN_PREFERENCES));
     $(document).on("click", "#ec-btn-generate-locations", () => generate(GEN_LOCATIONS));
     $(document).on("click", "#ec-btn-generate-relationships", () => generate(GEN_RELATIONSHIPS));
     $(document).on("click", "#ec-btn-generate-secrets", () => generate(GEN_SECRETS));
@@ -1980,11 +2186,6 @@ function bindEventHandlers() {
                 relationship: el.find(".ec-edit-relationship").val(),
                 personality: el.find(".ec-edit-personality").val(),
             };
-        } else if (type === GEN_PREFERENCES) {
-            newData = {
-                name: el.find(".ec-edit-name").val(),
-                preferences: el.find(".ec-edit-preferences").val(),
-            };
         } else if (type === GEN_LOCATIONS) {
             newData = {
                 name: el.find(".ec-edit-name").val(),
@@ -2044,7 +2245,6 @@ function loadSettingsUI() {
     $("#ec-enabled").prop("checked", settings.enabled);
     $("#ec-prompt-events").val(settings.promptEvents);
     $("#ec-prompt-characters").val(settings.promptCharacters);
-    $("#ec-prompt-preferences").val(settings.promptPreferences);
     $("#ec-prompt-locations").val(settings.promptLocations);
     $("#ec-prompt-relationships").val(settings.promptRelationships);
     $("#ec-prompt-secrets").val(settings.promptSecrets);
@@ -2061,7 +2261,6 @@ function loadSettingsUI() {
     $("#ec-auto-update-enabled").prop("checked", settings.autoUpdateEnabled);
     $("#ec-auto-events").val(settings.autoUpdateEvents || 0);
     $("#ec-auto-characters").val(settings.autoUpdateCharacters || 0);
-    $("#ec-auto-preferences").val(settings.autoUpdatePreferences || 0);
     $("#ec-auto-locations").val(settings.autoUpdateLocations || 0);
     $("#ec-auto-relationships").val(settings.autoUpdateRelationships || 0);
     $("#ec-auto-secrets").val(settings.autoUpdateSecrets || 0);
