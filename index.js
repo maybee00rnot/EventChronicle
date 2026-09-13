@@ -54,7 +54,7 @@ For EACH event, provide these fields:
 
 ═══ How to determine the "date" field ═══
 Scan the chat for time indicators:
-- Explicit dates/timestamps (e.g., "2026/02/14", dates in horae tags like "time:2026/2/14 15:00")
+- Explicit dates/timestamps (e.g., "2026/02/14", "14 февраля", time markers in narration)
 - Day transitions: sleeping/waking, "next morning", "на следующий день", time skips
 - Relative references: "three days later", "the following week"
 - Fantasy calendars: "Third Day of Frostfall Moon", festival names
@@ -268,6 +268,7 @@ const DEFAULT_SETTINGS = {
     promptSecrets: DEFAULT_PROMPTS[GEN_SECRETS],
     rangeMode: "auto",
     rangeManualCount: 50,
+    connectionProfileId: "",
     activeTab: GEN_EVENTS,
     activeLibraryTab: GEN_EVENTS,
 };
@@ -292,10 +293,10 @@ function getSettings() {
         }
     }
 
-    // Migrate: if the events prompt doesn't contain the date-detection block, upgrade it
+    // Migrate: if the events prompt doesn't contain the date-detection block or still has horae refs, upgrade it
     if (
         s.promptEvents &&
-        !s.promptEvents.includes("How to determine the")
+        (!s.promptEvents.includes("How to determine the") || s.promptEvents.includes("horae"))
     ) {
         console.log(`${extensionName}: Migrating events prompt to v3 (flat format with date detection)`);
         s.promptEvents = DEFAULT_PROMPTS[GEN_EVENTS];
@@ -370,6 +371,81 @@ function cleanMessage(mes) {
         .replace(/<[^>]*>/g, "")
         .replace(/\r\n/g, "\n")
         .trim();
+}
+
+// ---------- connection profiles ----------
+
+function getCurrentProfileName() {
+    try {
+        const cm = extension_settings?.connectionManager;
+        if (!cm || !cm.selectedProfile) return "";
+        const profile = cm.profiles?.find((p) => p.id === cm.selectedProfile);
+        return profile ? profile.name : "";
+    } catch { return ""; }
+}
+
+function getExtensionProfileId() {
+    return extension_settings[extensionName]?.connectionProfileId || "";
+}
+
+function getExtensionProfileName() {
+    const id = getExtensionProfileId();
+    if (!id) return "";
+    const profile = extension_settings?.connectionManager?.profiles?.find(
+        (p) => p.id === id,
+    );
+    return profile?.name || "";
+}
+
+async function switchProfile(profileName) {
+    const cm = extension_settings?.connectionManager;
+    if (!cm || !cm.profiles) return;
+
+    const profilesSelect = document.getElementById("connection_profiles");
+    if (!profilesSelect) return;
+
+    let targetId = "";
+    if (profileName) {
+        const profile = cm.profiles.find((p) => p.name === profileName);
+        if (profile) targetId = profile.id;
+    }
+
+    const awaitPromise = new Promise((resolve) => {
+        const onLoaded = () => {
+            eventSource.removeListener(event_types.CONNECTION_PROFILE_LOADED, onLoaded);
+            resolve();
+        };
+        eventSource.on(event_types.CONNECTION_PROFILE_LOADED, onLoaded);
+        setTimeout(() => {
+            eventSource.removeListener(event_types.CONNECTION_PROFILE_LOADED, onLoaded);
+            resolve();
+        }, 5000);
+    });
+
+    /** @type {HTMLSelectElement} */ (profilesSelect).value = targetId;
+    profilesSelect.dispatchEvent(new Event("change"));
+
+    await awaitPromise;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+}
+
+function updateProfilesList() {
+    const select = $("#ec-connection-profile");
+    if (!select.length) return;
+
+    const savedId = getExtensionProfileId();
+    select.empty().append('<option value="">Same as current</option>');
+
+    try {
+        const cm = extension_settings?.connectionManager;
+        if (cm && cm.profiles) {
+            for (const p of cm.profiles) {
+                select.append($("<option></option>").val(p.id).text(p.name));
+            }
+        }
+    } catch {}
+
+    select.val(savedId);
 }
 
 // ---------- AI generation ----------
@@ -490,7 +566,16 @@ async function generate(type) {
     btn.html('<i class="fa-solid fa-spinner fa-spin"></i> Generating...');
     btn.prop("disabled", true);
 
+    // Profile switching: use a different API profile if configured
+    const targetProfileName = getExtensionProfileName();
+    const originalProfileName = targetProfileName ? getCurrentProfileName() : "";
+    const needsProfileSwitch = targetProfileName && targetProfileName !== originalProfileName;
+
     try {
+        if (needsProfileSwitch) {
+            console.log(`${extensionName}: Switching to profile "${targetProfileName}" for generation`);
+            await switchProfile(targetProfileName);
+        }
         const chatText = messages
             .map((m) => `${m.name}: ${m.text}`)
             .join("\n\n");
@@ -605,6 +690,14 @@ async function generate(type) {
         console.error(`${extensionName}:`, err);
         toastr.error(`Generation failed: ${err.message}`);
     } finally {
+        if (needsProfileSwitch && originalProfileName !== undefined) {
+            console.log(`${extensionName}: Switching back to profile "${originalProfileName || "default"}"`);
+            try {
+                await switchProfile(originalProfileName);
+            } catch (e) {
+                console.warn(`${extensionName}: Failed to switch back to original profile`, e);
+            }
+        }
         isGenerating = false;
         btn.html(originalText);
         btn.prop("disabled", false);
@@ -1060,6 +1153,9 @@ function renderLibrary() {
                             <button class="ec-btn-icon ec-btn-add-event-to-day" title="Add event to this day">
                                 <i class="fa-solid fa-plus"></i>
                             </button>
+                            <button class="ec-btn-icon ec-btn-toggle-day" title="Collapse/expand day">
+                                <i class="fa-solid fa-chevron-up"></i>
+                            </button>
                         </div>
                     </div>
                     <div class="ec-day-events">`;
@@ -1435,6 +1531,19 @@ function getSettingsHtml() {
                     </div>
                 </div>
 
+                <!-- Connection profile -->
+                <div class="ec-setting-group">
+                    <div class="ec-setting-row">
+                        <label>Generation profile:</label>
+                        <select id="ec-connection-profile" class="text_pole">
+                            <option value="">Same as current</option>
+                        </select>
+                    </div>
+                    <div class="ec-setting-row" style="opacity: 0.6; font-size: 0.8em;">
+                        Use a different (e.g. cheaper) API profile for generation
+                    </div>
+                </div>
+
                 <hr>
 
                 <!-- Library -->
@@ -1599,6 +1708,13 @@ function bindEventHandlers() {
             updateContextInjection();
         });
 
+    // Connection profile selector
+    $(document).on("change", "#ec-connection-profile", function () {
+        const settings = getSettings();
+        settings.connectionProfileId = $(this).val() || "";
+        saveSettingsDebounced();
+    });
+
     // Generate buttons
     $(document).on("click", "#ec-btn-generate-events", () => generate(GEN_EVENTS));
     $(document).on("click", "#ec-btn-generate-characters", () => generate(GEN_CHARACTERS));
@@ -1619,6 +1735,21 @@ function bindEventHandlers() {
     // Library — also toggle on header click (but not on buttons)
     $(document).on("click", ".ec-record-header .ec-record-info", function () {
         $(this).closest(".ec-record").find("> .ec-record-header .ec-btn-toggle-record").click();
+    });
+
+    // Library — toggle day group expand/collapse
+    $(document).on("click", ".ec-btn-toggle-day", function (e) {
+        e.stopPropagation();
+        const dayGroup = $(this).closest(".ec-day-group");
+        const events = dayGroup.find(".ec-day-events");
+        const icon = $(this).find("i");
+        events.slideToggle(200);
+        icon.toggleClass("fa-chevron-down fa-chevron-up");
+    });
+
+    // Also toggle day on clicking the day info area
+    $(document).on("click", ".ec-day-header .ec-day-info", function () {
+        $(this).closest(".ec-day-group").find(".ec-btn-toggle-day").click();
     });
 
     // Delete record
@@ -1765,6 +1896,9 @@ function loadSettingsUI() {
     $("#ec-injection-depth").val(settings.injectionDepth);
     $("#ec-injection-role").val(settings.injectionRole);
 
+    // Connection profile
+    updateProfilesList();
+
     // Activate the right gen tab
     const activeTab = settings.activeTab || GEN_EVENTS;
     $(".ec-gen-tabs .ec-tab").removeClass("active");
@@ -1792,6 +1926,7 @@ jQuery(async () => {
     eventSource.on(event_types.CHAT_CHANGED, () => {
         renderLibrary();
         updateContextInjection();
+        updateProfilesList();
     });
 
     eventSource.on(event_types.MESSAGE_RECEIVED, () => {

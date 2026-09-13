@@ -299,6 +299,15 @@
     padding: 6px 10px;
     background: rgba(255, 255, 255, 0.04);
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    transition: background 0.15s;
+}
+
+.ec-day-header .ec-day-info {
+    cursor: pointer;
+}
+
+.ec-day-header .ec-day-info:hover {
+    opacity: 0.85;
 }
 
 .ec-day-info {
