@@ -82,9 +82,52 @@
     margin-right: 4px;
 }
 
-/* --- Auto-update section toggle --- */
+/* --- Auto-update section --- */
 .ec-auto-update-sections {
-    margin-top: 4px;
+    margin-top: 6px;
+}
+
+.ec-auto-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 0.85em;
+}
+
+.ec-auto-row > i {
+    width: 18px;
+    text-align: center;
+    opacity: 0.5;
+    flex-shrink: 0;
+}
+
+.ec-auto-label {
+    width: 90px;
+    flex-shrink: 0;
+    color: var(--SmartThemeBodyColor, #ccc);
+}
+
+.ec-auto-mid {
+    opacity: 0.4;
+    font-size: 0.9em;
+    flex-shrink: 0;
+}
+
+.ec-auto-input {
+    width: 55px !important;
+    max-width: 55px !important;
+    min-width: 45px !important;
+    text-align: center;
+    padding: 2px 4px !important;
+    font-size: 0.9em !important;
+    flex-shrink: 0;
+}
+
+.ec-auto-suffix {
+    opacity: 0.4;
+    font-size: 0.8em;
+    flex-shrink: 0;
 }
 
 /* --- Setting rows --- */

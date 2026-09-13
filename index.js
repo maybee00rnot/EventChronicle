@@ -1574,36 +1574,13 @@ function getSettingsHtml() {
                             </label>
                         </div>
                         <div class="ec-auto-update-sections">
-                            <div class="ec-setting-row">
-                                <label><i class="fa-solid fa-scroll" style="width: 16px; text-align: center;"></i> Events every</label>
-                                <input type="number" id="ec-auto-events" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
-                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
-                            </div>
-                            <div class="ec-setting-row">
-                                <label><i class="fa-solid fa-users" style="width: 16px; text-align: center;"></i> Characters every</label>
-                                <input type="number" id="ec-auto-characters" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
-                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
-                            </div>
-                            <div class="ec-setting-row">
-                                <label><i class="fa-solid fa-heart" style="width: 16px; text-align: center;"></i> Preferences every</label>
-                                <input type="number" id="ec-auto-preferences" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
-                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
-                            </div>
-                            <div class="ec-setting-row">
-                                <label><i class="fa-solid fa-map-marker-alt" style="width: 16px; text-align: center;"></i> Locations every</label>
-                                <input type="number" id="ec-auto-locations" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
-                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
-                            </div>
-                            <div class="ec-setting-row">
-                                <label><i class="fa-solid fa-project-diagram" style="width: 16px; text-align: center;"></i> Relationships every</label>
-                                <input type="number" id="ec-auto-relationships" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
-                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
-                            </div>
-                            <div class="ec-setting-row">
-                                <label><i class="fa-solid fa-user-secret" style="width: 16px; text-align: center;"></i> Secrets every</label>
-                                <input type="number" id="ec-auto-secrets" class="text_pole ec-range-count-input" min="0" value="0" placeholder="0=off">
-                                <span style="font-size: 0.8em; opacity: 0.6;">messages</span>
-                            </div>
+                            <div class="ec-auto-row"><i class="fa-solid fa-scroll"></i><span class="ec-auto-label">Events</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-events" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
+                            <div class="ec-auto-row"><i class="fa-solid fa-users"></i><span class="ec-auto-label">Characters</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-characters" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
+                            <div class="ec-auto-row"><i class="fa-solid fa-heart"></i><span class="ec-auto-label">Preferences</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-preferences" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
+                            <div class="ec-auto-row"><i class="fa-solid fa-map-marker-alt"></i><span class="ec-auto-label">Locations</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-locations" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
+                            <div class="ec-auto-row"><i class="fa-solid fa-project-diagram"></i><span class="ec-auto-label">Relationships</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-relationships" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
+                            <div class="ec-auto-row"><i class="fa-solid fa-user-secret"></i><span class="ec-auto-label">Secrets</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-secrets" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
+                            <div style="font-size: 0.75em; opacity: 0.45; padding: 2px 0 0 4px;">0 = disabled for that type</div>
                         </div>
                     </div>
 
@@ -1868,7 +1845,7 @@ function bindEventHandlers() {
     for (const [sel, key] of Object.entries(autoFields)) {
         $(sel)
             .val(settings[key] || 0)
-            .on("change", function () {
+            .on("input", function () {
                 settings[key] = parseInt($(this).val()) || 0;
                 saveSettingsDebounced();
             });
