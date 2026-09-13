@@ -271,3 +271,80 @@
     gap: 6px;
     cursor: pointer;
 }
+
+/* --- Day grouping (events) --- */
+.ec-day-group {
+    margin: 8px 0;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+}
+
+.ec-day-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.ec-day-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85em;
+}
+
+.ec-day-info i {
+    opacity: 0.5;
+}
+
+.ec-day-date {
+    font-weight: 600;
+    color: var(--SmartThemeHeaderColor, #ddd);
+}
+
+.ec-day-count {
+    font-size: 0.8em;
+    opacity: 0.6;
+    background: rgba(255, 255, 255, 0.08);
+    padding: 1px 6px;
+    border-radius: 10px;
+}
+
+.ec-day-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.ec-day-events {
+    padding: 4px 6px 6px;
+}
+
+/* --- Secret status badges --- */
+.ec-secret-status {
+    display: inline-block;
+    font-size: 0.75em;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.ec-secret-status.status-hidden {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+}
+
+.ec-secret-status.status-suspected {
+    background: rgba(234, 179, 8, 0.2);
+    color: #fde047;
+}
+
+.ec-secret-status.status-revealed {
+    background: rgba(34, 197, 94, 0.2);
+    color: #86efac;
+}

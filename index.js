@@ -1,13 +1,15 @@
 /**
  * EventChronicle — Structured event-based summary extension for SillyTavern.
  *
- * Three generation types:
- *   1. Events   — plot events with location, characters, detail, consequences
- *   2. Characters — character cards (name, appearance, relationship)
- *   3. Preferences — adult character preferences/fetishes
+ * Six generation types:
+ *   1. Events        — plot events grouped by in-world day
+ *   2. Characters    — character profiles
+ *   3. Preferences   — adult character preferences (18+)
+ *   4. Locations     — scene/location memory for world consistency
+ *   5. Relationships — relationship network between all characters
+ *   6. Secrets      — character secrets with status tracking
  *
- * Data lives in chat metadata under `extension_settings.EventChronicle`.
- * Per-chat data (records) lives in `chat_metadata.EventChronicle`.
+ * Data lives in chat[0].extra.EventChronicle (per-character storage).
  */
 
 import {
@@ -30,38 +32,69 @@ const extensionFolderPath = `scripts/extensions/third_party/${extensionName}`;
 const setExtensionPrompt = /** @type {any} */ (baseSetExtensionPrompt);
 const generateRawUnsafe = /** @type {any} */ (generateRaw);
 
-// Generation types
 const GEN_EVENTS = "events";
 const GEN_CHARACTERS = "characters";
 const GEN_PREFERENCES = "preferences";
+const GEN_LOCATIONS = "locations";
+const GEN_RELATIONSHIPS = "relationships";
+const GEN_SECRETS = "secrets";
 
 // ---------- default prompts ----------
 
 const DEFAULT_PROMPTS = {
-    [GEN_EVENTS]: `You are a skilled reteller of roleplay events. Your task is to extract ALL significant plot events from the provided chat messages.
+    [GEN_EVENTS]: `You are a skilled reteller of roleplay events. Your task is to extract ALL significant plot events from the provided chat messages and GROUP THEM BY IN-WORLD DAY/DATE.
 
-For each event, provide:
+For each day, provide:
+- date: the in-world date or time period (e.g., "February 14, 2026", "Day of the Festival", "Third morning in the village"). Be as specific as possible.
+
+For each event within a day, provide:
 - title: short name for the event
 - location: where it happened
 - characters: who was involved
 - detail: detailed retelling — why it started, what happened, how it ended
 - consequences: what consequences followed, if any
 
-Output ONLY a valid JSON array of event objects. No commentary, no markdown fences.
+Output ONLY a valid JSON array of day objects. No commentary, no markdown fences.
 
 Example format:
 [
   {
-    "title": "Arrival at the tavern",
-    "location": "The Silver Goblet tavern",
-    "characters": "{{user}}, Elara",
-    "detail": "{{user}} entered the tavern seeking information about the missing merchant. Elara, the barmaid, recognized them and offered to help. They discussed the last known whereabouts of the merchant over drinks.",
-    "consequences": "Elara revealed that the merchant was last seen heading toward the northern forest."
+    "date": "February 14, 2026",
+    "events": [
+      {
+        "title": "Arrival at the tavern",
+        "location": "The Silver Goblet tavern",
+        "characters": "{{user}}, Elara",
+        "detail": "{{user}} entered the tavern seeking information about the missing merchant. Elara, the barmaid, recognized them and offered to help.",
+        "consequences": "Elara revealed the merchant was last seen heading toward the northern forest."
+      },
+      {
+        "title": "Bar fight",
+        "location": "The Silver Goblet tavern",
+        "characters": "{{user}}, drunk patron",
+        "detail": "A drunk patron provoked {{user}} into a confrontation. {{user}} managed to defuse the situation by buying the man a drink.",
+        "consequences": "The patron shared a rumor about bandits on the northern road."
+      }
+    ]
+  },
+  {
+    "date": "February 15, 2026",
+    "events": [
+      {
+        "title": "Journey to the forest",
+        "location": "Northern Forest road",
+        "characters": "{{user}}, Elara",
+        "detail": "{{user}} and Elara set out at dawn toward the northern forest following the merchant's trail.",
+        "consequences": "They found tracks leading off the main road."
+      }
+    ]
   }
 ]
 
 Important rules:
 - Extract ALL events, not just major ones. Include conversations, encounters, discoveries.
+- Group events by their in-world date/day. Multiple events can happen on the same day.
+- If the exact date isn't clear, use descriptive time markers ("First evening", "Next morning", etc.)
 - Write in English.
 - Do NOT use asterisks (*), only plain text.
 - Output valid JSON only.`,
@@ -113,27 +146,124 @@ Important rules:
 - Base everything on what's actually in the text.
 - Write in English.
 - Output valid JSON only.`,
+
+    [GEN_LOCATIONS]: `You are analyzing a roleplay chat. Extract information about ALL locations/places that appear or are described in the chat.
+
+For each location, provide:
+- name: location name. Use the · separator to show hierarchy (e.g., "Silver Goblet·Hall", "Silver Goblet·Room 203", "Royal Palace·Throne Room")
+- description: PERMANENT physical features only — structure, materials, fixed furniture, architectural details, window directions, permanent decorations, relative position within parent location. Do NOT include temporary states like weather, lighting, crowd size, time-specific ambiance.
+- parentLocation: the parent location name if this is a sub-location (e.g., for "Silver Goblet·Hall" the parent is "Silver Goblet"). Empty string if top-level.
+
+Output ONLY a valid JSON array. No commentary, no markdown fences.
+
+Example format:
+[
+  {
+    "name": "Silver Goblet",
+    "description": "Two-story wooden building at the north road near the forest edge. Ground floor has the main hall and kitchen, upper floor has guest rooms. Faded wooden sign above the entrance.",
+    "parentLocation": ""
+  },
+  {
+    "name": "Silver Goblet·Hall",
+    "description": "Located on the first floor. Tall wooden hall with a long bar counter in the center, several round tables, fireplace on the east wall, trophy antlers above the mantle.",
+    "parentLocation": "Silver Goblet"
+  }
+]
+
+Important rules:
+- Only permanent physical features. No weather, lighting, mood, crowds, temporary objects.
+- Same location must always use exactly the same name.
+- Sub-locations describe position relative to their parent, not repeating the parent's external geography.
+- Write in English.
+- Output valid JSON only.`,
+
+    [GEN_RELATIONSHIPS]: `You are analyzing a roleplay chat. Extract ALL notable relationships between characters — not just with {{user}}, but between all characters.
+
+For each relationship, provide:
+- character1: first character's name
+- character2: second character's name
+- type: relationship type (friend, enemy, lover, employer, rival, family, ally, acquaintance, mentor, servant, etc.)
+- details: specifics about the relationship — how it formed, current state, any tensions or dynamics
+
+Output ONLY a valid JSON array. No commentary, no markdown fences.
+
+Example format:
+[
+  {
+    "character1": "{{user}}",
+    "character2": "Elara",
+    "type": "ally",
+    "details": "Elara helps {{user}} find the missing merchant. She seems to have a personal stake in the investigation."
+  },
+  {
+    "character1": "Elara",
+    "character2": "Marcus",
+    "type": "former lovers",
+    "details": "They were together years ago. Elara still holds resentment over how it ended."
+  }
+]
+
+Important rules:
+- Include ALL character pairs that have a notable relationship.
+- Include relationships between NPCs, not just with {{user}}.
+- Mention {{user}} by name in descriptions where relevant.
+- Write in English.
+- Output valid JSON only.`,
+
+    [GEN_SECRETS]: `You are analyzing a roleplay chat. Extract ALL character secrets — information known to some characters but hidden from others, or strong hints of hidden truths.
+
+For each secret, provide:
+- holder: the character who holds or knows the secret
+- secret: what the secret is
+- knownBy: who else knows about this secret (comma-separated names, or "no one" if only the holder knows)
+- status: one of "hidden" (actively concealed), "suspected" (others have hints/suspicions), "revealed" (has been uncovered/confessed)
+- hints: any clues or foreshadowing that appeared in the chat about this secret
+
+Output ONLY a valid JSON array. No commentary, no markdown fences.
+
+Example format:
+[
+  {
+    "holder": "Elara",
+    "secret": "She is actually a spy sent by the Northern Kingdom to monitor the tavern's visitors",
+    "knownBy": "no one",
+    "status": "hidden",
+    "hints": "She asked unusually specific questions about travelers from the north. She was seen writing a coded letter late at night."
+  },
+  {
+    "holder": "Marcus",
+    "secret": "He murdered the merchant and hid the body in the cellar",
+    "knownBy": "Elara",
+    "status": "suspected",
+    "hints": "Blood stains on his sleeve he tried to hide. Elara noticed the cellar door was locked with a new padlock."
+  }
+]
+
+Important rules:
+- Only include secrets known to characters but hidden from others, or strong hints of hidden truths.
+- Do NOT include completely unknown twists that no character has any awareness of.
+- Include the current status accurately — if a secret was revealed during the chat, mark it as "revealed".
+- Write in English.
+- Output valid JSON only.`,
 };
 
 // ---------- default settings ----------
 
 const DEFAULT_SETTINGS = {
     enabled: true,
-    // Injection settings
-    injectionPosition: 0, // 0 = before main prompt, 1 = in-chat @ depth, 2 = after main prompt
+    injectionPosition: 0,
     injectionDepth: 0,
-    injectionRole: 0, // 0 = system, 1 = user, 2 = assistant
+    injectionRole: 0,
     scanWI: true,
-    // Per-type prompts
     promptEvents: DEFAULT_PROMPTS[GEN_EVENTS],
     promptCharacters: DEFAULT_PROMPTS[GEN_CHARACTERS],
     promptPreferences: DEFAULT_PROMPTS[GEN_PREFERENCES],
-    // Range settings
-    rangeMode: "auto", // "auto" | "manual"
+    promptLocations: DEFAULT_PROMPTS[GEN_LOCATIONS],
+    promptRelationships: DEFAULT_PROMPTS[GEN_RELATIONSHIPS],
+    promptSecrets: DEFAULT_PROMPTS[GEN_SECRETS],
+    rangeMode: "auto",
     rangeManualCount: 50,
-    // Active tab in UI
     activeTab: GEN_EVENTS,
-    // Active library tab
     activeLibraryTab: GEN_EVENTS,
 };
 
@@ -170,7 +300,16 @@ function getChatMemory() {
     if (!mes.extra[extensionName]) {
         mes.extra[extensionName] = { records: [] };
     }
-    return mes.extra[extensionName];
+    // Migrate old event records: add date field to items that don't have it
+    const data = mes.extra[extensionName];
+    for (const rec of data.records || []) {
+        if (rec.type === GEN_EVENTS) {
+            for (const item of rec.items || []) {
+                if (!item.date) item.date = "Unknown";
+            }
+        }
+    }
+    return data;
 }
 
 function setChatMemory(data) {
@@ -240,9 +379,7 @@ async function safeGenerateRaw(promptText, prefillText = "") {
 
 function parseJSONResponse(text) {
     let cleaned = String(text || "");
-    // Strip markdown fences
     cleaned = cleaned.replace(/```json\s*/gi, "").replace(/```\s*/gi, "");
-    // Find the JSON array
     const startIdx = cleaned.indexOf("[");
     const endIdx = cleaned.lastIndexOf("]");
     if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
@@ -254,10 +391,6 @@ function parseJSONResponse(text) {
 
 // ---------- message collection ----------
 
-/**
- * Get the message index where the last record of a given type ends.
- * Returns -1 if no records exist for this type.
- */
 function getLastRecordEndIndex(type) {
     const mem = getChatMemory();
     const records = (mem.records || []).filter((r) => r.type === type);
@@ -272,12 +405,6 @@ function getLastRecordEndIndex(type) {
     return maxEnd;
 }
 
-/**
- * Collect chat messages for generation.
- * In "auto" mode: from the end of last record to current end of chat.
- * In "manual" mode: last N messages.
- * If "all": all visible messages.
- */
 function collectMessages(type, mode, manualCount) {
     const ctx = getContext();
     const chat = Array.isArray(ctx.chat) ? ctx.chat : [];
@@ -295,7 +422,6 @@ function collectMessages(type, mode, manualCount) {
         const count = Math.max(1, parseInt(manualCount) || 50);
         fromIdx = Math.max(0, chat.length - count);
     }
-    // else "all" — fromIdx stays 0
 
     if (fromIdx > toIdx) {
         return { messages: [], fromIdx, toIdx };
@@ -342,28 +468,30 @@ async function generate(type) {
     btn.prop("disabled", true);
 
     try {
-        // Build the chat text
         const chatText = messages
             .map((m) => `${m.name}: ${m.text}`)
             .join("\n\n");
 
-        // Get the prompt for this type
         let prompt;
         if (type === GEN_EVENTS) {
             prompt = settings.promptEvents || DEFAULT_PROMPTS[GEN_EVENTS];
         } else if (type === GEN_CHARACTERS) {
             prompt = settings.promptCharacters || DEFAULT_PROMPTS[GEN_CHARACTERS];
-        } else {
+        } else if (type === GEN_PREFERENCES) {
             prompt = settings.promptPreferences || DEFAULT_PROMPTS[GEN_PREFERENCES];
+        } else if (type === GEN_LOCATIONS) {
+            prompt = settings.promptLocations || DEFAULT_PROMPTS[GEN_LOCATIONS];
+        } else if (type === GEN_RELATIONSHIPS) {
+            prompt = settings.promptRelationships || DEFAULT_PROMPTS[GEN_RELATIONSHIPS];
+        } else {
+            prompt = settings.promptSecrets || DEFAULT_PROMPTS[GEN_SECRETS];
         }
 
-        // Replace {{user}} / {{char}} placeholders
         const ctx = getContext();
         const userName = ctx.name1 || "User";
         const charName = ctx.name2 || "Character";
         prompt = prompt.replace(/\{\{user\}\}/gi, userName).replace(/\{\{char\}\}/gi, charName);
 
-        // Compose the full prompt — just the prompt + new messages, no old summary
         let fullPrompt = prompt + "\n\n";
         fullPrompt += `CHAT MESSAGES (messages ${fromIdx + 1} to ${toIdx + 1}):\n${chatText}`;
 
@@ -371,10 +499,8 @@ async function generate(type) {
             "Here is the extracted information as a valid JSON array:\n[";
         const result = await safeGenerateRaw(fullPrompt, prefill);
 
-        // Parse the response
         let parsed;
         try {
-            // Try to parse — the prefill starts with "[" so the result might not include it
             const fullResult = "[" + result;
             parsed = parseJSONResponse(fullResult);
         } catch {
@@ -391,28 +517,61 @@ async function generate(type) {
             return;
         }
 
-        // Create a new record
+        // Build record items
+        let items;
+        let totalCount;
+
+        if (type === GEN_EVENTS) {
+            // AI returns array of {date, events[]} or flat array of events
+            items = [];
+            if (parsed.length > 0 && parsed[0].events && Array.isArray(parsed[0].events)) {
+                // Grouped by day format
+                for (const day of parsed) {
+                    const date = day.date || "Unknown";
+                    for (const ev of day.events || []) {
+                        items.push({ id: `evt-${uid()}`, date, ...ev });
+                    }
+                }
+            } else {
+                // Flat format (fallback)
+                for (const ev of parsed) {
+                    items.push({ id: `evt-${uid()}`, date: ev.date || "Unknown", ...ev });
+                }
+            }
+            totalCount = items.length;
+        } else {
+            items = parsed.map((item) => ({
+                id: `evt-${uid()}`,
+                ...item,
+            }));
+            totalCount = items.length;
+        }
+
         const record = {
             id: `rec-${uid()}`,
             type,
             messageRange: { from: fromIdx, to: toIdx },
             createdAt: Date.now(),
-            items: parsed.map((item) => ({
-                id: `evt-${uid()}`,
-                ...item,
-            })),
+            items,
         };
 
-        // Save
         const mem = getChatMemory();
         const records = [...(mem.records || []), record];
         setChatMemory({ records });
 
+        const typeLabel = {
+            [GEN_EVENTS]: "events",
+            [GEN_CHARACTERS]: "characters",
+            [GEN_PREFERENCES]: "preferences",
+            [GEN_LOCATIONS]: "locations",
+            [GEN_RELATIONSHIPS]: "relationships",
+            [GEN_SECRETS]: "secrets",
+        }[type] || type;
+
         toastr.success(
-            `Generated ${record.items.length} ${type === GEN_EVENTS ? "events" : type === GEN_CHARACTERS ? "characters" : "preferences"} from messages ${fromIdx + 1}–${toIdx + 1}`,
+            `Generated ${totalCount} ${typeLabel} from messages ${fromIdx + 1}–${toIdx + 1}`,
         );
 
-        // Refresh UI
         renderLibrary();
         updateContextInjection();
     } catch (err) {
@@ -439,39 +598,98 @@ function buildInjectionTextForType(type) {
 
     if (records.length === 0) return "";
 
-    const parts = [];
-
-    for (const rec of records) {
-        const from = (rec.messageRange?.from || 0) + 1;
-        const to = (rec.messageRange?.to || 0) + 1;
-        let recText = `[Record: messages ${from}–${to}]\n`;
-
-        if (type === GEN_EVENTS) {
-            for (let i = 0; i < rec.items.length; i++) {
-                const ev = rec.items[i];
-                recText += `\nEVENT ${i + 1}: ${ev.title || "Untitled"}\n`;
-                if (ev.location) recText += `Location: ${ev.location}\n`;
-                if (ev.characters) recText += `Characters: ${ev.characters}\n`;
-                if (ev.detail) recText += `Detail: ${ev.detail}\n`;
-                if (ev.consequences) recText += `Consequences: ${ev.consequences}\n`;
-            }
-        } else if (type === GEN_CHARACTERS) {
-            for (const ch of rec.items) {
-                recText += `\n${ch.name || "Unknown"}:\n`;
-                if (ch.appearance) recText += `  Appearance: ${ch.appearance}\n`;
-                if (ch.relationship) recText += `  Relationship: ${ch.relationship}\n`;
-                if (ch.personality) recText += `  Personality: ${ch.personality}\n`;
-            }
-        } else if (type === GEN_PREFERENCES) {
-            for (const p of rec.items) {
-                recText += `\n${p.name || "Unknown"}: ${p.preferences || "N/A"}\n`;
+    if (type === GEN_EVENTS) {
+        // Collect all events, group by date across all records
+        const byDate = new Map();
+        for (const rec of records) {
+            for (const item of rec.items || []) {
+                const date = item.date || "Unknown";
+                if (!byDate.has(date)) byDate.set(date, []);
+                byDate.get(date).push(item);
             }
         }
-
-        parts.push(recText.trim());
+        const parts = [];
+        for (const [date, events] of byDate) {
+            let section = `=== ${date} ===\n`;
+            for (let i = 0; i < events.length; i++) {
+                const ev = events[i];
+                section += `\nEVENT ${i + 1}: ${ev.title || "Untitled"}\n`;
+                if (ev.location) section += `Location: ${ev.location}\n`;
+                if (ev.characters) section += `Characters: ${ev.characters}\n`;
+                if (ev.detail) section += `Detail: ${ev.detail}\n`;
+                if (ev.consequences) section += `Consequences: ${ev.consequences}\n`;
+            }
+            parts.push(section.trim());
+        }
+        return parts.join("\n\n");
     }
 
-    return parts.join("\n\n");
+    if (type === GEN_CHARACTERS) {
+        const parts = [];
+        for (const rec of records) {
+            for (const ch of rec.items || []) {
+                let text = `${ch.name || "Unknown"}:\n`;
+                if (ch.appearance) text += `  Appearance: ${ch.appearance}\n`;
+                if (ch.relationship) text += `  Relationship: ${ch.relationship}\n`;
+                if (ch.personality) text += `  Personality: ${ch.personality}\n`;
+                parts.push(text.trim());
+            }
+        }
+        return parts.join("\n\n");
+    }
+
+    if (type === GEN_PREFERENCES) {
+        const parts = [];
+        for (const rec of records) {
+            for (const p of rec.items || []) {
+                parts.push(`${p.name || "Unknown"}: ${p.preferences || "N/A"}`);
+            }
+        }
+        return parts.join("\n");
+    }
+
+    if (type === GEN_LOCATIONS) {
+        const parts = [];
+        for (const rec of records) {
+            for (const loc of rec.items || []) {
+                let text = `${loc.name || "Unknown"}:`;
+                if (loc.description) text += ` ${loc.description}`;
+                parts.push(text);
+            }
+        }
+        return parts.join("\n\n");
+    }
+
+    if (type === GEN_RELATIONSHIPS) {
+        const parts = [];
+        for (const rec of records) {
+            for (const rel of rec.items || []) {
+                const c1 = rel.character1 || "?";
+                const c2 = rel.character2 || "?";
+                const rtype = rel.type || "unknown";
+                const details = rel.details || "";
+                parts.push(`${c1} → ${c2}: ${rtype}${details ? " — " + details : ""}`);
+            }
+        }
+        return parts.join("\n");
+    }
+
+    if (type === GEN_SECRETS) {
+        const parts = [];
+        for (const rec of records) {
+            for (const s of rec.items || []) {
+                const holder = s.holder || "Unknown";
+                const status = (s.status || "hidden").toUpperCase();
+                let text = `[${status}] ${holder}'s secret: ${s.secret || "N/A"}`;
+                if (s.knownBy && s.knownBy !== "no one") text += `\n  Known by: ${s.knownBy}`;
+                if (s.hints) text += `\n  Hints: ${s.hints}`;
+                parts.push(text);
+            }
+        }
+        return parts.join("\n\n");
+    }
+
+    return "";
 }
 
 function updateContextInjection() {
@@ -487,15 +705,20 @@ function updateContextInjection() {
         return;
     }
 
-    // Build combined text from all types
     const eventText = buildInjectionTextForType(GEN_EVENTS);
     const charText = buildInjectionTextForType(GEN_CHARACTERS);
     const prefText = buildInjectionTextForType(GEN_PREFERENCES);
+    const locText = buildInjectionTextForType(GEN_LOCATIONS);
+    const relText = buildInjectionTextForType(GEN_RELATIONSHIPS);
+    const secText = buildInjectionTextForType(GEN_SECRETS);
 
     const sections = [];
     if (eventText) sections.push(`<story_events>\n${eventText}\n</story_events>`);
     if (charText) sections.push(`<character_profiles>\n${charText}\n</character_profiles>`);
     if (prefText) sections.push(`<character_preferences>\n${prefText}\n</character_preferences>`);
+    if (locText) sections.push(`<story_locations>\n${locText}\n</story_locations>`);
+    if (relText) sections.push(`<character_relationships>\n${relText}\n</character_relationships>`);
+    if (secText) sections.push(`<character_secrets>\n${secText}\n</character_secrets>`);
 
     const fullText = sections.join("\n\n");
 
@@ -531,7 +754,6 @@ function deleteItem(recordId, itemId) {
     if (!rec) return;
     rec.items = (rec.items || []).filter((it) => it.id !== itemId);
     if (rec.items.length === 0) {
-        // Remove the whole record if empty
         setChatMemory({ records: records.filter((r) => r.id !== recordId) });
     } else {
         setChatMemory({ records });
@@ -552,17 +774,69 @@ function updateItem(recordId, itemId, newData) {
     updateContextInjection();
 }
 
-function addManualItem(recordId, type) {
+function createBlankItem(type, extraData = {}) {
+    if (type === GEN_EVENTS) {
+        return {
+            id: `evt-${uid()}`,
+            date: extraData.date || "New Day",
+            title: "New Event",
+            location: "",
+            characters: "",
+            detail: "",
+            consequences: "",
+        };
+    } else if (type === GEN_CHARACTERS) {
+        return {
+            id: `evt-${uid()}`,
+            name: "New Character",
+            appearance: "",
+            relationship: "",
+            personality: "",
+        };
+    } else if (type === GEN_PREFERENCES) {
+        return {
+            id: `evt-${uid()}`,
+            name: "Character Name",
+            preferences: "",
+        };
+    } else if (type === GEN_LOCATIONS) {
+        return {
+            id: `evt-${uid()}`,
+            name: "New Location",
+            description: "",
+            parentLocation: "",
+        };
+    } else if (type === GEN_RELATIONSHIPS) {
+        return {
+            id: `evt-${uid()}`,
+            character1: "",
+            character2: "",
+            type: "",
+            details: "",
+        };
+    } else if (type === GEN_SECRETS) {
+        return {
+            id: `evt-${uid()}`,
+            holder: "",
+            secret: "",
+            knownBy: "no one",
+            status: "hidden",
+            hints: "",
+        };
+    }
+    return { id: `evt-${uid()}` };
+}
+
+function addManualItem(recordId, type, extraData = {}) {
     const mem = getChatMemory();
     const records = mem.records || [];
     const rec = records.find((r) => r.id === recordId);
     if (!rec) {
-        console.warn(`${extensionName}: addManualItem — record ${recordId} not found`);
         toastr.warning("Record not found");
         return;
     }
 
-    const newItem = createBlankItem(type);
+    const newItem = createBlankItem(type, extraData);
     rec.items.push(newItem);
     setChatMemory({ records });
     renderLibrary();
@@ -573,9 +847,10 @@ function addManualItem(recordId, type) {
     if (recEl.length) {
         const itemsDiv = recEl.find(".ec-record-items");
         itemsDiv.show();
-        recEl.find(".ec-btn-toggle-record i")
+        recEl.find("> .ec-record-header .ec-btn-toggle-record i")
             .removeClass("fa-chevron-down")
             .addClass("fa-chevron-up");
+
         const newItemEl = recEl.find(`.ec-item[data-item-id="${newItem.id}"]`);
         if (newItemEl.length) {
             newItemEl.find(".ec-item-body").hide();
@@ -607,7 +882,7 @@ function addManualRecord(type) {
     if (recEl.length) {
         const itemsDiv = recEl.find(".ec-record-items");
         itemsDiv.show();
-        recEl.find(".ec-btn-toggle-record i")
+        recEl.find("> .ec-record-header .ec-btn-toggle-record i")
             .removeClass("fa-chevron-down")
             .addClass("fa-chevron-up");
         const newItemEl = recEl.find(`.ec-item[data-item-id="${newItem.id}"]`);
@@ -616,33 +891,6 @@ function addManualRecord(type) {
             newItemEl.find(".ec-item-edit-form").show();
             newItemEl.find(".ec-item-actions").hide();
         }
-    }
-}
-
-function createBlankItem(type) {
-    if (type === GEN_EVENTS) {
-        return {
-            id: `evt-${uid()}`,
-            title: "New Event",
-            location: "",
-            characters: "",
-            detail: "",
-            consequences: "",
-        };
-    } else if (type === GEN_CHARACTERS) {
-        return {
-            id: `evt-${uid()}`,
-            name: "New Character",
-            appearance: "",
-            relationship: "",
-            personality: "",
-        };
-    } else {
-        return {
-            id: `evt-${uid()}`,
-            name: "Character Name",
-            preferences: "",
-        };
     }
 }
 
@@ -661,7 +909,7 @@ function exportRecords() {
     const timestamp = new Date().toISOString().slice(0, 10);
     const filename = `EventChronicle_${charName}_${timestamp}.json`;
 
-    const data = JSON.stringify({ version: 1, exportedAt: Date.now(), records }, null, 2);
+    const data = JSON.stringify({ version: 3, exportedAt: Date.now(), records }, null, 2);
     const blob = new Blob([data], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -695,15 +943,19 @@ function importRecords(file) {
                 return;
             }
 
-            // Validate basic structure
             for (const rec of importedRecords) {
                 if (!rec.type || !Array.isArray(rec.items)) {
                     throw new Error("Invalid record structure — each record needs 'type' and 'items'");
                 }
-                // Ensure IDs
                 if (!rec.id) rec.id = `rec-${uid()}`;
                 for (const item of rec.items) {
                     if (!item.id) item.id = `evt-${uid()}`;
+                }
+                // Migrate old events: ensure date field
+                if (rec.type === GEN_EVENTS) {
+                    for (const item of rec.items) {
+                        if (!item.date) item.date = "Unknown";
+                    }
                 }
             }
 
@@ -713,13 +965,11 @@ function importRecords(file) {
             );
 
             if (mode) {
-                // Merge
                 const existing = mem.records || [];
                 const records = [...existing, ...importedRecords];
                 setChatMemory({ records });
                 toastr.success(`Merged ${importedRecords.length} records (total: ${records.length})`);
             } else {
-                // Replace
                 setChatMemory({ records: importedRecords });
                 toastr.success(`Replaced with ${importedRecords.length} imported records`);
             }
@@ -760,10 +1010,48 @@ function renderLibrary() {
         const to = (rec.messageRange?.to || 0) + 1;
         const date = new Date(rec.createdAt).toLocaleString();
 
+        let countLabel;
         let itemsHtml = "";
 
-        for (const item of rec.items || []) {
-            itemsHtml += renderItemCard(rec.id, item, activeType);
+        if (activeType === GEN_EVENTS) {
+            // Group items by date for display
+            const dateGroups = new Map();
+            for (const item of rec.items || []) {
+                const d = item.date || "Unknown";
+                if (!dateGroups.has(d)) dateGroups.set(d, []);
+                dateGroups.get(d).push(item);
+            }
+            const totalEvents = (rec.items || []).length;
+            const totalDays = dateGroups.size;
+            countLabel = `${totalDays} ${totalDays === 1 ? "day" : "days"}, ${totalEvents} ${totalEvents === 1 ? "event" : "events"}`;
+
+            for (const [dayDate, events] of dateGroups) {
+                itemsHtml += `<div class="ec-day-group" data-day-date="${escapeHtml(dayDate)}">
+                    <div class="ec-day-header">
+                        <div class="ec-day-info">
+                            <i class="fa-regular fa-calendar"></i>
+                            <span class="ec-day-date">${escapeHtml(dayDate)}</span>
+                            <span class="ec-day-count">${events.length} ${events.length === 1 ? "event" : "events"}</span>
+                        </div>
+                        <div class="ec-day-actions">
+                            <button class="ec-btn-icon ec-btn-add-event-to-day" title="Add event to this day">
+                                <i class="fa-solid fa-plus"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="ec-day-events">`;
+
+                for (const ev of events) {
+                    itemsHtml += renderEventCard(rec.id, ev);
+                }
+
+                itemsHtml += `</div></div>`;
+            }
+        } else {
+            countLabel = `${(rec.items || []).length} items`;
+            for (const item of rec.items || []) {
+                itemsHtml += renderItemCard(rec.id, item, activeType);
+            }
         }
 
         const recordHtml = `
@@ -772,10 +1060,10 @@ function renderLibrary() {
                 <div class="ec-record-info">
                     <span class="ec-record-range">Messages ${from}–${to}</span>
                     <span class="ec-record-date">${escapeHtml(date)}</span>
-                    <span class="ec-record-count">${(rec.items || []).length} items</span>
+                    <span class="ec-record-count">${countLabel}</span>
                 </div>
                 <div class="ec-record-actions">
-                    <button class="ec-btn-icon ec-btn-add-item" title="Add item">
+                    <button class="ec-btn-icon ec-btn-add-item" title="${activeType === GEN_EVENTS ? 'Add new day' : 'Add item'}">
                         <i class="fa-solid fa-plus"></i>
                     </button>
                     <button class="ec-btn-icon ec-btn-toggle-record" title="Expand/collapse">
@@ -795,41 +1083,45 @@ function renderLibrary() {
     }
 }
 
+function renderEventCard(recordId, item) {
+    return `
+    <div class="ec-item" data-record-id="${escapeHtml(recordId)}" data-item-id="${escapeHtml(item.id)}">
+        <div class="ec-item-header">
+            <span class="ec-item-title">${escapeHtml(item.title || "Untitled")}</span>
+            <div class="ec-item-actions">
+                <button class="ec-btn-icon ec-btn-edit-item" title="Edit"><i class="fa-solid fa-pencil"></i></button>
+                <button class="ec-btn-icon ec-btn-delete-item" title="Delete"><i class="fa-solid fa-trash"></i></button>
+            </div>
+        </div>
+        <div class="ec-item-body">
+            <div class="ec-item-field"><strong>Location:</strong> ${escapeHtml(item.location || "—")}</div>
+            <div class="ec-item-field"><strong>Characters:</strong> ${escapeHtml(item.characters || "—")}</div>
+            <div class="ec-item-field"><strong>Detail:</strong> ${escapeHtml(item.detail || "—")}</div>
+            <div class="ec-item-field"><strong>Consequences:</strong> ${escapeHtml(item.consequences || "—")}</div>
+        </div>
+        <div class="ec-item-edit-form" style="display: none;">
+            <label>Day/Date</label>
+            <input type="text" class="text_pole ec-edit-date" value="${escapeHtml(item.date || "")}">
+            <label>Title</label>
+            <input type="text" class="text_pole ec-edit-title" value="${escapeHtml(item.title || "")}">
+            <label>Location</label>
+            <input type="text" class="text_pole ec-edit-location" value="${escapeHtml(item.location || "")}">
+            <label>Characters</label>
+            <input type="text" class="text_pole ec-edit-characters" value="${escapeHtml(item.characters || "")}">
+            <label>Detail</label>
+            <textarea class="text_pole ec-edit-detail" rows="3">${escapeHtml(item.detail || "")}</textarea>
+            <label>Consequences</label>
+            <textarea class="text_pole ec-edit-consequences" rows="2">${escapeHtml(item.consequences || "")}</textarea>
+            <div class="ec-edit-buttons">
+                <button class="menu_button ec-btn-save-item">Save</button>
+                <button class="menu_button ec-btn-cancel-edit">Cancel</button>
+            </div>
+        </div>
+    </div>`;
+}
+
 function renderItemCard(recordId, item, type) {
-    if (type === GEN_EVENTS) {
-        return `
-        <div class="ec-item" data-record-id="${escapeHtml(recordId)}" data-item-id="${escapeHtml(item.id)}">
-            <div class="ec-item-header">
-                <span class="ec-item-title">${escapeHtml(item.title || "Untitled")}</span>
-                <div class="ec-item-actions">
-                    <button class="ec-btn-icon ec-btn-edit-item" title="Edit"><i class="fa-solid fa-pencil"></i></button>
-                    <button class="ec-btn-icon ec-btn-delete-item" title="Delete"><i class="fa-solid fa-trash"></i></button>
-                </div>
-            </div>
-            <div class="ec-item-body">
-                <div class="ec-item-field"><strong>Location:</strong> ${escapeHtml(item.location || "—")}</div>
-                <div class="ec-item-field"><strong>Characters:</strong> ${escapeHtml(item.characters || "—")}</div>
-                <div class="ec-item-field"><strong>Detail:</strong> ${escapeHtml(item.detail || "—")}</div>
-                <div class="ec-item-field"><strong>Consequences:</strong> ${escapeHtml(item.consequences || "—")}</div>
-            </div>
-            <div class="ec-item-edit-form" style="display: none;">
-                <label>Title</label>
-                <input type="text" class="text_pole ec-edit-title" value="${escapeHtml(item.title || "")}">
-                <label>Location</label>
-                <input type="text" class="text_pole ec-edit-location" value="${escapeHtml(item.location || "")}">
-                <label>Characters</label>
-                <input type="text" class="text_pole ec-edit-characters" value="${escapeHtml(item.characters || "")}">
-                <label>Detail</label>
-                <textarea class="text_pole ec-edit-detail" rows="3">${escapeHtml(item.detail || "")}</textarea>
-                <label>Consequences</label>
-                <textarea class="text_pole ec-edit-consequences" rows="2">${escapeHtml(item.consequences || "")}</textarea>
-                <div class="ec-edit-buttons">
-                    <button class="menu_button ec-btn-save-item">Save</button>
-                    <button class="menu_button ec-btn-cancel-edit">Cancel</button>
-                </div>
-            </div>
-        </div>`;
-    } else if (type === GEN_CHARACTERS) {
+    if (type === GEN_CHARACTERS) {
         return `
         <div class="ec-item" data-record-id="${escapeHtml(recordId)}" data-item-id="${escapeHtml(item.id)}">
             <div class="ec-item-header">
@@ -859,8 +1151,9 @@ function renderItemCard(recordId, item, type) {
                 </div>
             </div>
         </div>`;
-    } else {
-        // Preferences
+    }
+
+    if (type === GEN_PREFERENCES) {
         return `
         <div class="ec-item" data-record-id="${escapeHtml(recordId)}" data-item-id="${escapeHtml(item.id)}">
             <div class="ec-item-header">
@@ -885,6 +1178,112 @@ function renderItemCard(recordId, item, type) {
             </div>
         </div>`;
     }
+
+    if (type === GEN_LOCATIONS) {
+        return `
+        <div class="ec-item" data-record-id="${escapeHtml(recordId)}" data-item-id="${escapeHtml(item.id)}">
+            <div class="ec-item-header">
+                <span class="ec-item-title"><i class="fa-solid fa-map-pin" style="opacity:0.5; margin-right:4px;"></i>${escapeHtml(item.name || "Unknown")}</span>
+                <div class="ec-item-actions">
+                    <button class="ec-btn-icon ec-btn-edit-item" title="Edit"><i class="fa-solid fa-pencil"></i></button>
+                    <button class="ec-btn-icon ec-btn-delete-item" title="Delete"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            </div>
+            <div class="ec-item-body">
+                ${item.parentLocation ? `<div class="ec-item-field"><strong>Part of:</strong> ${escapeHtml(item.parentLocation)}</div>` : ""}
+                <div class="ec-item-field">${escapeHtml(item.description || "—")}</div>
+            </div>
+            <div class="ec-item-edit-form" style="display: none;">
+                <label>Name (use · for hierarchy, e.g. "Tavern·Hall")</label>
+                <input type="text" class="text_pole ec-edit-name" value="${escapeHtml(item.name || "")}">
+                <label>Parent Location</label>
+                <input type="text" class="text_pole ec-edit-parentLocation" value="${escapeHtml(item.parentLocation || "")}">
+                <label>Description (permanent physical features only)</label>
+                <textarea class="text_pole ec-edit-description" rows="3">${escapeHtml(item.description || "")}</textarea>
+                <div class="ec-edit-buttons">
+                    <button class="menu_button ec-btn-save-item">Save</button>
+                    <button class="menu_button ec-btn-cancel-edit">Cancel</button>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    if (type === GEN_RELATIONSHIPS) {
+        const label = (item.character1 && item.character2)
+            ? `${item.character1} → ${item.character2}`
+            : "New Relationship";
+        const typeLabel = item.type ? ` (${item.type})` : "";
+        return `
+        <div class="ec-item" data-record-id="${escapeHtml(recordId)}" data-item-id="${escapeHtml(item.id)}">
+            <div class="ec-item-header">
+                <span class="ec-item-title"><i class="fa-solid fa-arrows-left-right" style="opacity:0.5; margin-right:4px;"></i>${escapeHtml(label)}${escapeHtml(typeLabel)}</span>
+                <div class="ec-item-actions">
+                    <button class="ec-btn-icon ec-btn-edit-item" title="Edit"><i class="fa-solid fa-pencil"></i></button>
+                    <button class="ec-btn-icon ec-btn-delete-item" title="Delete"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            </div>
+            <div class="ec-item-body">
+                <div class="ec-item-field">${escapeHtml(item.details || "—")}</div>
+            </div>
+            <div class="ec-item-edit-form" style="display: none;">
+                <label>Character 1</label>
+                <input type="text" class="text_pole ec-edit-character1" value="${escapeHtml(item.character1 || "")}">
+                <label>Character 2</label>
+                <input type="text" class="text_pole ec-edit-character2" value="${escapeHtml(item.character2 || "")}">
+                <label>Relationship Type</label>
+                <input type="text" class="text_pole ec-edit-reltype" value="${escapeHtml(item.type || "")}">
+                <label>Details</label>
+                <textarea class="text_pole ec-edit-details" rows="2">${escapeHtml(item.details || "")}</textarea>
+                <div class="ec-edit-buttons">
+                    <button class="menu_button ec-btn-save-item">Save</button>
+                    <button class="menu_button ec-btn-cancel-edit">Cancel</button>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    if (type === GEN_SECRETS) {
+        const status = item.status || "hidden";
+        const statusClass = `status-${status}`;
+        return `
+        <div class="ec-item" data-record-id="${escapeHtml(recordId)}" data-item-id="${escapeHtml(item.id)}">
+            <div class="ec-item-header">
+                <span class="ec-item-title"><i class="fa-solid fa-user-secret" style="opacity:0.5; margin-right:4px;"></i>${escapeHtml(item.holder || "Unknown")}</span>
+                <div class="ec-item-actions">
+                    <span class="ec-secret-status ${statusClass}">${escapeHtml(status)}</span>
+                    <button class="ec-btn-icon ec-btn-edit-item" title="Edit"><i class="fa-solid fa-pencil"></i></button>
+                    <button class="ec-btn-icon ec-btn-delete-item" title="Delete"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            </div>
+            <div class="ec-item-body">
+                <div class="ec-item-field"><strong>Secret:</strong> ${escapeHtml(item.secret || "—")}</div>
+                <div class="ec-item-field"><strong>Known by:</strong> ${escapeHtml(item.knownBy || "no one")}</div>
+                ${item.hints ? `<div class="ec-item-field"><strong>Hints:</strong> ${escapeHtml(item.hints)}</div>` : ""}
+            </div>
+            <div class="ec-item-edit-form" style="display: none;">
+                <label>Secret Holder</label>
+                <input type="text" class="text_pole ec-edit-holder" value="${escapeHtml(item.holder || "")}">
+                <label>Secret</label>
+                <textarea class="text_pole ec-edit-secret" rows="2">${escapeHtml(item.secret || "")}</textarea>
+                <label>Known By (comma-separated, or "no one")</label>
+                <input type="text" class="text_pole ec-edit-knownBy" value="${escapeHtml(item.knownBy || "")}">
+                <label>Status</label>
+                <select class="text_pole ec-edit-status">
+                    <option value="hidden" ${status === "hidden" ? "selected" : ""}>Hidden</option>
+                    <option value="suspected" ${status === "suspected" ? "selected" : ""}>Suspected</option>
+                    <option value="revealed" ${status === "revealed" ? "selected" : ""}>Revealed</option>
+                </select>
+                <label>Hints / Foreshadowing</label>
+                <textarea class="text_pole ec-edit-hints" rows="2">${escapeHtml(item.hints || "")}</textarea>
+                <div class="ec-edit-buttons">
+                    <button class="menu_button ec-btn-save-item">Save</button>
+                    <button class="menu_button ec-btn-cancel-edit">Cancel</button>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    return "";
 }
 
 // ---------- settings HTML ----------
@@ -913,10 +1312,19 @@ function getSettingsHtml() {
                         <i class="fa-solid fa-scroll"></i> Events
                     </button>
                     <button class="ec-tab" data-tab="${GEN_CHARACTERS}">
-                        <i class="fa-solid fa-users"></i> Characters
+                        <i class="fa-solid fa-users"></i> Chars
                     </button>
                     <button class="ec-tab" data-tab="${GEN_PREFERENCES}">
-                        <i class="fa-solid fa-heart"></i> Preferences
+                        <i class="fa-solid fa-heart"></i> Prefs
+                    </button>
+                    <button class="ec-tab" data-tab="${GEN_LOCATIONS}">
+                        <i class="fa-solid fa-map-marker-alt"></i> Locs
+                    </button>
+                    <button class="ec-tab" data-tab="${GEN_RELATIONSHIPS}">
+                        <i class="fa-solid fa-project-diagram"></i> Rels
+                    </button>
+                    <button class="ec-tab" data-tab="${GEN_SECRETS}">
+                        <i class="fa-solid fa-user-secret"></i> Secrets
                     </button>
                 </div>
 
@@ -933,6 +1341,18 @@ function getSettingsHtml() {
                     <label>Preferences prompt:</label>
                     <textarea class="text_pole ec-prompt-input" id="ec-prompt-preferences" rows="6"></textarea>
                 </div>
+                <div class="ec-tab-content" data-for="${GEN_LOCATIONS}" style="display: none;">
+                    <label>Locations prompt:</label>
+                    <textarea class="text_pole ec-prompt-input" id="ec-prompt-locations" rows="6"></textarea>
+                </div>
+                <div class="ec-tab-content" data-for="${GEN_RELATIONSHIPS}" style="display: none;">
+                    <label>Relationships prompt:</label>
+                    <textarea class="text_pole ec-prompt-input" id="ec-prompt-relationships" rows="6"></textarea>
+                </div>
+                <div class="ec-tab-content" data-for="${GEN_SECRETS}" style="display: none;">
+                    <label>Secrets prompt:</label>
+                    <textarea class="text_pole ec-prompt-input" id="ec-prompt-secrets" rows="6"></textarea>
+                </div>
 
                 <!-- Range settings -->
                 <div class="ec-setting-row ec-range-row">
@@ -946,7 +1366,7 @@ function getSettingsHtml() {
                            min="1" value="50" placeholder="Count">
                 </div>
 
-                <!-- Generate button -->
+                <!-- Generate buttons (one per type, only active one is visible) -->
                 <div class="ec-setting-row ec-gen-row">
                     <button class="menu_button" id="ec-btn-generate-events">
                         <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Events
@@ -956,6 +1376,15 @@ function getSettingsHtml() {
                     </button>
                     <button class="menu_button" id="ec-btn-generate-preferences" style="display: none;">
                         <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Preferences
+                    </button>
+                    <button class="menu_button" id="ec-btn-generate-locations" style="display: none;">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Locations
+                    </button>
+                    <button class="menu_button" id="ec-btn-generate-relationships" style="display: none;">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Relationships
+                    </button>
+                    <button class="menu_button" id="ec-btn-generate-secrets" style="display: none;">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Secrets
                     </button>
                 </div>
 
@@ -1004,9 +1433,12 @@ function getSettingsHtml() {
 
                 <!-- Library type tabs -->
                 <div class="ec-tabs ec-lib-tabs">
-                    <button class="ec-lib-tab active" data-type="${GEN_EVENTS}">Events</button>
-                    <button class="ec-lib-tab" data-type="${GEN_CHARACTERS}">Characters</button>
-                    <button class="ec-lib-tab" data-type="${GEN_PREFERENCES}">Preferences</button>
+                    <button class="ec-lib-tab active" data-type="${GEN_EVENTS}"><i class="fa-solid fa-scroll"></i> Events</button>
+                    <button class="ec-lib-tab" data-type="${GEN_CHARACTERS}"><i class="fa-solid fa-users"></i> Chars</button>
+                    <button class="ec-lib-tab" data-type="${GEN_PREFERENCES}"><i class="fa-solid fa-heart"></i> Prefs</button>
+                    <button class="ec-lib-tab" data-type="${GEN_LOCATIONS}"><i class="fa-solid fa-map-marker-alt"></i> Locs</button>
+                    <button class="ec-lib-tab" data-type="${GEN_RELATIONSHIPS}"><i class="fa-solid fa-project-diagram"></i> Rels</button>
+                    <button class="ec-lib-tab" data-type="${GEN_SECRETS}"><i class="fa-solid fa-user-secret"></i> Secrets</button>
                 </div>
 
                 <div id="ec-library-list" class="ec-library-list"></div>
@@ -1037,11 +1469,8 @@ function bindEventHandlers() {
         $(this).addClass("active");
         $(".ec-tab-content").hide();
         $(`.ec-tab-content[data-for="${tab}"]`).show();
-
-        // Show the right generate button
         $('[id^="ec-btn-generate-"]').hide();
         $(`#ec-btn-generate-${tab}`).show();
-
         settings.activeTab = tab;
         saveSettingsDebounced();
     });
@@ -1056,7 +1485,7 @@ function bindEventHandlers() {
         renderLibrary();
     });
 
-    // Prompt inputs — save on change
+    // Prompt inputs
     $(document).on("input", "#ec-prompt-events", function () {
         settings.promptEvents = $(this).val();
         saveSettingsDebounced();
@@ -1067,6 +1496,18 @@ function bindEventHandlers() {
     });
     $(document).on("input", "#ec-prompt-preferences", function () {
         settings.promptPreferences = $(this).val();
+        saveSettingsDebounced();
+    });
+    $(document).on("input", "#ec-prompt-locations", function () {
+        settings.promptLocations = $(this).val();
+        saveSettingsDebounced();
+    });
+    $(document).on("input", "#ec-prompt-relationships", function () {
+        settings.promptRelationships = $(this).val();
+        saveSettingsDebounced();
+    });
+    $(document).on("input", "#ec-prompt-secrets", function () {
+        settings.promptSecrets = $(this).val();
         saveSettingsDebounced();
     });
 
@@ -1116,6 +1557,9 @@ function bindEventHandlers() {
     $(document).on("click", "#ec-btn-generate-events", () => generate(GEN_EVENTS));
     $(document).on("click", "#ec-btn-generate-characters", () => generate(GEN_CHARACTERS));
     $(document).on("click", "#ec-btn-generate-preferences", () => generate(GEN_PREFERENCES));
+    $(document).on("click", "#ec-btn-generate-locations", () => generate(GEN_LOCATIONS));
+    $(document).on("click", "#ec-btn-generate-relationships", () => generate(GEN_RELATIONSHIPS));
+    $(document).on("click", "#ec-btn-generate-secrets", () => generate(GEN_SECRETS));
 
     // Library — toggle record expand
     $(document).on("click", ".ec-btn-toggle-record", function () {
@@ -1128,7 +1572,7 @@ function bindEventHandlers() {
 
     // Library — also toggle on header click (but not on buttons)
     $(document).on("click", ".ec-record-header .ec-record-info", function () {
-        $(this).closest(".ec-record").find(".ec-btn-toggle-record").click();
+        $(this).closest(".ec-record").find("> .ec-record-header .ec-btn-toggle-record").click();
     });
 
     // Delete record
@@ -1139,11 +1583,18 @@ function bindEventHandlers() {
         }
     });
 
-    // Add item to record
+    // Add item to record (for events: adds a new day with blank event; for others: adds item)
     $(document).on("click", ".ec-btn-add-item", function () {
         const recordId = $(this).closest(".ec-record").data("record-id");
         const type = settings.activeLibraryTab || GEN_EVENTS;
         addManualItem(recordId, type);
+    });
+
+    // Add event to specific day (events only)
+    $(document).on("click", ".ec-btn-add-event-to-day", function () {
+        const recordId = $(this).closest(".ec-record").data("record-id");
+        const dayDate = $(this).closest(".ec-day-group").data("day-date");
+        addManualItem(recordId, GEN_EVENTS, { date: dayDate });
     });
 
     // Add new record manually
@@ -1154,12 +1605,10 @@ function bindEventHandlers() {
     });
 
     // Export records
-    $(document).on("click", "#ec-btn-export", function () {
-        exportRecords();
-    });
+    $(document).on("click", "#ec-btn-export", () => exportRecords());
 
     // Import records
-    $(document).on("click", "#ec-btn-import", function () {
+    $(document).on("click", "#ec-btn-import", () => {
         $("#ec-import-file").val("").click();
     });
     $(document).on("change", "#ec-import-file", function () {
@@ -1204,6 +1653,7 @@ function bindEventHandlers() {
         let newData;
         if (type === GEN_EVENTS) {
             newData = {
+                date: el.find(".ec-edit-date").val(),
                 title: el.find(".ec-edit-title").val(),
                 location: el.find(".ec-edit-location").val(),
                 characters: el.find(".ec-edit-characters").val(),
@@ -1217,10 +1667,31 @@ function bindEventHandlers() {
                 relationship: el.find(".ec-edit-relationship").val(),
                 personality: el.find(".ec-edit-personality").val(),
             };
-        } else {
+        } else if (type === GEN_PREFERENCES) {
             newData = {
                 name: el.find(".ec-edit-name").val(),
                 preferences: el.find(".ec-edit-preferences").val(),
+            };
+        } else if (type === GEN_LOCATIONS) {
+            newData = {
+                name: el.find(".ec-edit-name").val(),
+                parentLocation: el.find(".ec-edit-parentLocation").val(),
+                description: el.find(".ec-edit-description").val(),
+            };
+        } else if (type === GEN_RELATIONSHIPS) {
+            newData = {
+                character1: el.find(".ec-edit-character1").val(),
+                character2: el.find(".ec-edit-character2").val(),
+                type: el.find(".ec-edit-reltype").val(),
+                details: el.find(".ec-edit-details").val(),
+            };
+        } else if (type === GEN_SECRETS) {
+            newData = {
+                holder: el.find(".ec-edit-holder").val(),
+                secret: el.find(".ec-edit-secret").val(),
+                knownBy: el.find(".ec-edit-knownBy").val(),
+                status: el.find(".ec-edit-status").val(),
+                hints: el.find(".ec-edit-hints").val(),
             };
         }
 
@@ -1239,13 +1710,16 @@ function loadSettingsUI() {
     $("#ec-prompt-events").val(settings.promptEvents);
     $("#ec-prompt-characters").val(settings.promptCharacters);
     $("#ec-prompt-preferences").val(settings.promptPreferences);
+    $("#ec-prompt-locations").val(settings.promptLocations);
+    $("#ec-prompt-relationships").val(settings.promptRelationships);
+    $("#ec-prompt-secrets").val(settings.promptSecrets);
     $("#ec-range-mode").val(settings.rangeMode);
     $("#ec-range-count").val(settings.rangeManualCount);
     $("#ec-injection-position").val(settings.injectionPosition);
     $("#ec-injection-depth").val(settings.injectionDepth);
     $("#ec-injection-role").val(settings.injectionRole);
 
-    // Activate the right tabs
+    // Activate the right gen tab
     const activeTab = settings.activeTab || GEN_EVENTS;
     $(".ec-gen-tabs .ec-tab").removeClass("active");
     $(`.ec-gen-tabs .ec-tab[data-tab="${activeTab}"]`).addClass("active");
@@ -1254,6 +1728,7 @@ function loadSettingsUI() {
     $('[id^="ec-btn-generate-"]').hide();
     $(`#ec-btn-generate-${activeTab}`).show();
 
+    // Activate the right lib tab
     const activeLibTab = settings.activeLibraryTab || GEN_EVENTS;
     $(".ec-lib-tabs .ec-lib-tab").removeClass("active");
     $(`.ec-lib-tabs .ec-lib-tab[data-type="${activeLibTab}"]`).addClass("active");
@@ -1268,7 +1743,6 @@ jQuery(async () => {
     loadSettingsUI();
     bindEventHandlers();
 
-    // Hook into ST events
     eventSource.on(event_types.CHAT_CHANGED, () => {
         renderLibrary();
         updateContextInjection();
@@ -1282,9 +1756,8 @@ jQuery(async () => {
         updateContextInjection();
     });
 
-    // Initial render
     renderLibrary();
     updateContextInjection();
 
-    console.log(`${extensionName}: loaded`);
+    console.log(`${extensionName}: loaded v3.0`);
 });
