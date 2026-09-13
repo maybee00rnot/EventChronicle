@@ -44,8 +44,25 @@ const GEN_SECRETS = "secrets";
 const DEFAULT_PROMPTS = {
     [GEN_EVENTS]: `You are a skilled reteller of roleplay events. Your task is to extract ALL significant plot events from the provided chat messages and GROUP THEM BY IN-WORLD DAY/DATE.
 
+═══ How to determine in-world dates ═══
+Carefully scan the chat text for ANY time indicators:
+1. Explicit dates or timestamps (e.g., "2026/02/14", "14 февраля", dates in <horae> tags like "time:2026/2/14 15:00")
+2. Time-of-day markers: dawn, morning, noon, afternoon, evening, dusk, night, midnight
+3. Day transitions: characters falling asleep and waking up, "the next morning", "когда наступил рассвет", "на следующий день", scene breaks with time skips
+4. Relative time references: "three days later", "the following week", "через два дня"
+5. In-world calendar systems: fantasy dates ("Third Day of Frostfall Moon"), seasons, festivals
+6. Contextual clues: meals (breakfast = morning, dinner = evening), shop opening/closing, sunlight/darkness descriptions
+
+Rules for dates:
+- If the chat contains explicit dates (from narration, horae tags, or character dialogue), use them exactly.
+- If no explicit date exists but day boundaries are clear (sleep/wake cycles, "next day"), number them sequentially: "Day 1", "Day 2", etc.
+- If multiple events happen in one day at different times, they ALL belong under the same day — do NOT split them.
+- A new day starts ONLY when there is a clear transition: sleeping through the night, an explicit "next day/morning" marker, or a stated time jump.
+- When in doubt whether time has passed, keep events in the same day.
+
+═══ Output format ═══
 For each day, provide:
-- date: the in-world date or time period (e.g., "February 14, 2026", "Day of the Festival", "Third morning in the village"). Be as specific as possible.
+- date: the in-world date (use the most specific format available from the text)
 
 For each event within a day, provide:
 - title: short name for the event
@@ -59,7 +76,7 @@ Output ONLY a valid JSON array of day objects. No commentary, no markdown fences
 Example format:
 [
   {
-    "date": "February 14, 2026",
+    "date": "2026/02/14",
     "events": [
       {
         "title": "Arrival at the tavern",
@@ -78,7 +95,7 @@ Example format:
     ]
   },
   {
-    "date": "February 15, 2026",
+    "date": "2026/02/15",
     "events": [
       {
         "title": "Journey to the forest",
@@ -94,7 +111,7 @@ Example format:
 Important rules:
 - Extract ALL events, not just major ones. Include conversations, encounters, discoveries.
 - Group events by their in-world date/day. Multiple events can happen on the same day.
-- If the exact date isn't clear, use descriptive time markers ("First evening", "Next morning", etc.)
+- NEVER put events into different days unless there is a clear day transition in the text.
 - Write in English.
 - Do NOT use asterisks (*), only plain text.
 - Output valid JSON only.`,
@@ -274,6 +291,10 @@ let isGenerating = false;
 
 // ---------- helpers ----------
 
+// Old default prompts for migration detection — if user's saved prompt matches
+// an old default, it gets replaced with the new one automatically.
+const OLD_DEFAULT_EVENTS_SIGNATURE = "Your task is to extract ALL significant plot events from the provided chat messages";
+
 function getSettings() {
     if (!extension_settings[extensionName]) {
         extension_settings[extensionName] = {};
@@ -284,6 +305,23 @@ function getSettings() {
             s[key] = value;
         }
     }
+
+    // Migrate: if the events prompt is the old default (no date-detection block), upgrade it
+    if (
+        s.promptEvents &&
+        s.promptEvents.includes(OLD_DEFAULT_EVENTS_SIGNATURE) &&
+        !s.promptEvents.includes("How to determine in-world dates")
+    ) {
+        console.log(`${extensionName}: Migrating events prompt to v3 (day-detection)`);
+        s.promptEvents = DEFAULT_PROMPTS[GEN_EVENTS];
+        saveSettingsDebounced();
+    }
+
+    // Migrate: add new prompt fields that didn't exist before
+    if (!s.promptLocations) { s.promptLocations = DEFAULT_PROMPTS[GEN_LOCATIONS]; }
+    if (!s.promptRelationships) { s.promptRelationships = DEFAULT_PROMPTS[GEN_RELATIONSHIPS]; }
+    if (!s.promptSecrets) { s.promptSecrets = DEFAULT_PROMPTS[GEN_SECRETS]; }
+
     return s;
 }
 
@@ -1330,27 +1368,27 @@ function getSettingsHtml() {
 
                 <!-- Per-tab content -->
                 <div class="ec-tab-content" data-for="${GEN_EVENTS}">
-                    <label>Events prompt:</label>
+                    <div class="ec-prompt-header"><label>Events prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_EVENTS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
                     <textarea class="text_pole ec-prompt-input" id="ec-prompt-events" rows="6"></textarea>
                 </div>
                 <div class="ec-tab-content" data-for="${GEN_CHARACTERS}" style="display: none;">
-                    <label>Characters prompt:</label>
+                    <div class="ec-prompt-header"><label>Characters prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_CHARACTERS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
                     <textarea class="text_pole ec-prompt-input" id="ec-prompt-characters" rows="6"></textarea>
                 </div>
                 <div class="ec-tab-content" data-for="${GEN_PREFERENCES}" style="display: none;">
-                    <label>Preferences prompt:</label>
+                    <div class="ec-prompt-header"><label>Preferences prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_PREFERENCES}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
                     <textarea class="text_pole ec-prompt-input" id="ec-prompt-preferences" rows="6"></textarea>
                 </div>
                 <div class="ec-tab-content" data-for="${GEN_LOCATIONS}" style="display: none;">
-                    <label>Locations prompt:</label>
+                    <div class="ec-prompt-header"><label>Locations prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_LOCATIONS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
                     <textarea class="text_pole ec-prompt-input" id="ec-prompt-locations" rows="6"></textarea>
                 </div>
                 <div class="ec-tab-content" data-for="${GEN_RELATIONSHIPS}" style="display: none;">
-                    <label>Relationships prompt:</label>
+                    <div class="ec-prompt-header"><label>Relationships prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_RELATIONSHIPS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
                     <textarea class="text_pole ec-prompt-input" id="ec-prompt-relationships" rows="6"></textarea>
                 </div>
                 <div class="ec-tab-content" data-for="${GEN_SECRETS}" style="display: none;">
-                    <label>Secrets prompt:</label>
+                    <div class="ec-prompt-header"><label>Secrets prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_SECRETS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
                     <textarea class="text_pole ec-prompt-input" id="ec-prompt-secrets" rows="6"></textarea>
                 </div>
 
@@ -1509,6 +1547,29 @@ function bindEventHandlers() {
     $(document).on("input", "#ec-prompt-secrets", function () {
         settings.promptSecrets = $(this).val();
         saveSettingsDebounced();
+    });
+
+    // Reset prompt to default
+    $(document).on("click", ".ec-btn-reset-prompt", function () {
+        const promptType = $(this).data("prompt-type");
+        if (!confirm("Reset this prompt to the default? Your custom changes will be lost.")) return;
+
+        const promptMap = {
+            [GEN_EVENTS]: { key: "promptEvents", el: "#ec-prompt-events" },
+            [GEN_CHARACTERS]: { key: "promptCharacters", el: "#ec-prompt-characters" },
+            [GEN_PREFERENCES]: { key: "promptPreferences", el: "#ec-prompt-preferences" },
+            [GEN_LOCATIONS]: { key: "promptLocations", el: "#ec-prompt-locations" },
+            [GEN_RELATIONSHIPS]: { key: "promptRelationships", el: "#ec-prompt-relationships" },
+            [GEN_SECRETS]: { key: "promptSecrets", el: "#ec-prompt-secrets" },
+        };
+
+        const info = promptMap[promptType];
+        if (!info) return;
+
+        settings[info.key] = DEFAULT_PROMPTS[promptType];
+        $(info.el).val(settings[info.key]);
+        saveSettingsDebounced();
+        toastr.success("Prompt reset to default");
     });
 
     // Range settings

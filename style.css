@@ -84,6 +84,17 @@
     width: 100%;
 }
 
+/* --- Prompt header with reset button --- */
+.ec-prompt-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.ec-prompt-header label {
+    flex: 1;
+}
+
 /* --- Prompt textareas --- */
 .ec-prompt-input {
     width: 100%;
