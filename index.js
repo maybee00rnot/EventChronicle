@@ -158,50 +158,30 @@ function getSettings() {
 }
 
 /**
- * Data is stored in chat_metadata AND in chat[0].extra for reliability.
- * chat_metadata is per-chat (each chat = specific character), so records
- * are automatically separated per character.
- * We also mirror to chat[0].extra so data survives chat exports/imports.
+ * Data is stored in chat[0].extra (same approach as SunnyMemories).
+ * ctx.chat is a reference to the real chat array, so modifications persist.
+ * Each chat is per-character, so records are automatically separated.
  */
 function getChatMemory() {
     const ctx = getContext();
-
-    // Primary: chat_metadata
-    if (ctx.chat_metadata) {
-        if (!ctx.chat_metadata[extensionName]) {
-            // Try to recover from chat[0].extra
-            const chat = Array.isArray(ctx.chat) ? ctx.chat : [];
-            if (chat.length > 0 && chat[0]?.extra?.[extensionName]) {
-                ctx.chat_metadata[extensionName] = chat[0].extra[extensionName];
-            } else {
-                ctx.chat_metadata[extensionName] = { records: [] };
-            }
-        }
-        return ctx.chat_metadata[extensionName];
+    if (!ctx || !ctx.chat || ctx.chat.length === 0) return { records: [] };
+    const mes = ctx.chat[0];
+    if (!mes.extra) mes.extra = {};
+    if (!mes.extra[extensionName]) {
+        mes.extra[extensionName] = { records: [] };
     }
-
-    return { records: [] };
+    return mes.extra[extensionName];
 }
 
 function setChatMemory(data) {
     const ctx = getContext();
-    if (!ctx.chat_metadata) return;
-
-    if (!ctx.chat_metadata[extensionName]) {
-        ctx.chat_metadata[extensionName] = { records: [] };
+    if (!ctx || !ctx.chat || ctx.chat.length === 0) return;
+    const mes = ctx.chat[0];
+    if (!mes.extra) mes.extra = {};
+    if (!mes.extra[extensionName]) {
+        mes.extra[extensionName] = { records: [] };
     }
-    Object.assign(ctx.chat_metadata[extensionName], data);
-
-    // Mirror to chat[0].extra for persistence across exports
-    const chat = Array.isArray(ctx.chat) ? ctx.chat : [];
-    if (chat.length > 0) {
-        if (!chat[0].extra) chat[0].extra = {};
-        chat[0].extra[extensionName] = ctx.chat_metadata[extensionName];
-    }
-
-    if (ctx.saveMetadata) {
-        ctx.saveMetadata();
-    }
+    Object.assign(mes.extra[extensionName], data);
     if (ctx.saveChat) {
         ctx.saveChat();
     }
@@ -618,19 +598,8 @@ function addManualRecord(type) {
     };
     const records = [...(mem.records || []), record];
     setChatMemory({ records });
-
-    // DEBUG: verify data was actually saved
-    const verify = getChatMemory();
-    const savedCount = (verify.records || []).length;
-    const filtered = (verify.records || []).filter((r) => r.type === type).length;
-    toastr.info(`Saved ${savedCount} total records, ${filtered} of type "${type}"`);
-
     renderLibrary();
     updateContextInjection();
-
-    // DEBUG: check if record element appeared in DOM
-    const container = $("#ec-library-list");
-    toastr.info(`Library container exists: ${container.length > 0}, children: ${container.children().length}`);
 
     // Auto-expand the new record and open edit form
     const recEl = $(`.ec-record[data-record-id="${record.id}"]`);
@@ -646,8 +615,6 @@ function addManualRecord(type) {
             newItemEl.find(".ec-item-edit-form").show();
             newItemEl.find(".ec-item-actions").hide();
         }
-    } else {
-        toastr.warning(`Record element NOT found in DOM (id: ${record.id})`);
     }
 }
 
@@ -1084,15 +1051,8 @@ function bindEventHandlers() {
     // Add new record manually
     $(document).on("click", "#ec-btn-add-record", function (e) {
         e.stopPropagation();
-        try {
-            const type = settings.activeLibraryTab || GEN_EVENTS;
-            console.log(`${extensionName}: addManualRecord clicked, type=${type}`);
-            addManualRecord(type);
-            toastr.success("Record added");
-        } catch (err) {
-            console.error(`${extensionName}: addManualRecord error`, err);
-            toastr.error(`Error adding record: ${err.message}`);
-        }
+        const type = settings.activeLibraryTab || GEN_EVENTS;
+        addManualRecord(type);
     });
 
     // Delete item
