@@ -64,7 +64,6 @@ Important rules:
 - Extract ALL events, not just major ones. Include conversations, encounters, discoveries.
 - Write in English.
 - Do NOT use asterisks (*), only plain text.
-- If a previous summary exists, do NOT repeat events already summarized — only add NEW events.
 - Output valid JSON only.`,
 
     [GEN_CHARACTERS]: `You are analyzing a roleplay chat. Extract information about ALL characters that {{user}} has interacted with.
@@ -368,16 +367,6 @@ async function generate(type) {
             .map((m) => `${m.name}: ${m.text}`)
             .join("\n\n");
 
-        // Get the existing summary for context (so AI doesn't repeat)
-        const mem = getChatMemory();
-        const existingRecords = (mem.records || []).filter(
-            (r) => r.type === type,
-        );
-        let existingContext = "";
-        if (existingRecords.length > 0) {
-            existingContext = buildInjectionTextForType(type);
-        }
-
         // Get the prompt for this type
         let prompt;
         if (type === GEN_EVENTS) {
@@ -388,17 +377,14 @@ async function generate(type) {
             prompt = settings.promptPreferences || DEFAULT_PROMPTS[GEN_PREFERENCES];
         }
 
-        // Replace {{user}} placeholder
+        // Replace {{user}} / {{char}} placeholders
         const ctx = getContext();
         const userName = ctx.name1 || "User";
         const charName = ctx.name2 || "Character";
         prompt = prompt.replace(/\{\{user\}\}/gi, userName).replace(/\{\{char\}\}/gi, charName);
 
-        // Compose the full prompt
+        // Compose the full prompt — just the prompt + new messages, no old summary
         let fullPrompt = prompt + "\n\n";
-        if (existingContext) {
-            fullPrompt += `EXISTING SUMMARY (do NOT repeat these, only add NEW information):\n${existingContext}\n\n`;
-        }
         fullPrompt += `CHAT MESSAGES (messages ${fromIdx + 1} to ${toIdx + 1}):\n${chatText}`;
 
         const prefill =
@@ -619,11 +605,8 @@ function addManualItem(recordId, type) {
 }
 
 function addManualRecord(type) {
-    console.log(`${extensionName}: addManualRecord called, type=${type}`);
     const mem = getChatMemory();
-    console.log(`${extensionName}: getChatMemory returned`, JSON.stringify(mem).substring(0, 200));
     const chatLength = getAbsoluteChatLength();
-    console.log(`${extensionName}: chatLength=${chatLength}`);
 
     const newItem = createBlankItem(type);
     const record = {
@@ -635,12 +618,22 @@ function addManualRecord(type) {
     };
     const records = [...(mem.records || []), record];
     setChatMemory({ records });
+
+    // DEBUG: verify data was actually saved
+    const verify = getChatMemory();
+    const savedCount = (verify.records || []).length;
+    const filtered = (verify.records || []).filter((r) => r.type === type).length;
+    toastr.info(`Saved ${savedCount} total records, ${filtered} of type "${type}"`);
+
     renderLibrary();
     updateContextInjection();
 
+    // DEBUG: check if record element appeared in DOM
+    const container = $("#ec-library-list");
+    toastr.info(`Library container exists: ${container.length > 0}, children: ${container.children().length}`);
+
     // Auto-expand the new record and open edit form
     const recEl = $(`.ec-record[data-record-id="${record.id}"]`);
-    console.log(`${extensionName}: recEl found:`, recEl.length);
     if (recEl.length) {
         const itemsDiv = recEl.find(".ec-record-items");
         itemsDiv.show();
@@ -653,6 +646,8 @@ function addManualRecord(type) {
             newItemEl.find(".ec-item-edit-form").show();
             newItemEl.find(".ec-item-actions").hide();
         }
+    } else {
+        toastr.warning(`Record element NOT found in DOM (id: ${record.id})`);
     }
 }
 
