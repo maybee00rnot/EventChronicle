@@ -785,7 +785,8 @@ async function generate(type) {
             .join("\n\n");
 
         // Check if records already exist for this type → use update prompt
-        const existingRecordsContext = buildExistingRecordsContext(type);
+        // Events are excluded: user hides messages after summarizing, so no duplicates possible
+        const existingRecordsContext = type !== GEN_EVENTS ? buildExistingRecordsContext(type) : "";
         const isUpdateMode = existingRecordsContext.length > 0;
 
         let prompt;
