@@ -646,6 +646,94 @@ function createBlankItem(type) {
     }
 }
 
+// ---------- import / export ----------
+
+function exportRecords() {
+    const mem = getChatMemory();
+    const records = mem.records || [];
+    if (records.length === 0) {
+        toastr.warning("Nothing to export — no records found");
+        return;
+    }
+
+    const ctx = getContext();
+    const charName = (ctx.name2 || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `EventChronicle_${charName}_${timestamp}.json`;
+
+    const data = JSON.stringify({ version: 1, exportedAt: Date.now(), records }, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toastr.success(`Exported ${records.length} records to ${filename}`);
+}
+
+function importRecords(file) {
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        try {
+            const parsed = JSON.parse(e.target.result);
+            let importedRecords;
+
+            if (parsed.version && Array.isArray(parsed.records)) {
+                importedRecords = parsed.records;
+            } else if (Array.isArray(parsed)) {
+                importedRecords = parsed;
+            } else {
+                throw new Error("Unrecognized format");
+            }
+
+            if (importedRecords.length === 0) {
+                toastr.warning("The file contains no records");
+                return;
+            }
+
+            // Validate basic structure
+            for (const rec of importedRecords) {
+                if (!rec.type || !Array.isArray(rec.items)) {
+                    throw new Error("Invalid record structure — each record needs 'type' and 'items'");
+                }
+                // Ensure IDs
+                if (!rec.id) rec.id = `rec-${uid()}`;
+                for (const item of rec.items) {
+                    if (!item.id) item.id = `evt-${uid()}`;
+                }
+            }
+
+            const mem = getChatMemory();
+            const mode = confirm(
+                `Import ${importedRecords.length} records.\n\nOK = Merge with existing records\nCancel = Replace all existing records`
+            );
+
+            if (mode) {
+                // Merge
+                const existing = mem.records || [];
+                const records = [...existing, ...importedRecords];
+                setChatMemory({ records });
+                toastr.success(`Merged ${importedRecords.length} records (total: ${records.length})`);
+            } else {
+                // Replace
+                setChatMemory({ records: importedRecords });
+                toastr.success(`Replaced with ${importedRecords.length} imported records`);
+            }
+
+            renderLibrary();
+            updateContextInjection();
+        } catch (err) {
+            console.error(`${extensionName}: Import failed`, err);
+            toastr.error(`Import failed: ${err.message}`);
+        }
+    };
+    reader.readAsText(file);
+}
+
 // ---------- UI rendering ----------
 
 function renderLibrary() {
@@ -900,10 +988,19 @@ function getSettingsHtml() {
                 <!-- Library -->
                 <div class="ec-library-header">
                     <b>Library</b>
-                    <button class="ec-btn-icon" id="ec-btn-add-record" title="Add record manually">
-                        <i class="fa-solid fa-plus"></i>
-                    </button>
+                    <div style="display: flex; gap: 4px; align-items: center;">
+                        <button class="ec-btn-icon" id="ec-btn-export" title="Export all records to JSON">
+                            <i class="fa-solid fa-file-export"></i>
+                        </button>
+                        <button class="ec-btn-icon" id="ec-btn-import" title="Import records from JSON">
+                            <i class="fa-solid fa-file-import"></i>
+                        </button>
+                        <button class="ec-btn-icon" id="ec-btn-add-record" title="Add record manually">
+                            <i class="fa-solid fa-plus"></i>
+                        </button>
+                    </div>
                 </div>
+                <input type="file" id="ec-import-file" accept=".json" style="display: none;">
 
                 <!-- Library type tabs -->
                 <div class="ec-tabs ec-lib-tabs">
@@ -1054,6 +1151,23 @@ function bindEventHandlers() {
         e.stopPropagation();
         const type = settings.activeLibraryTab || GEN_EVENTS;
         addManualRecord(type);
+    });
+
+    // Export records
+    $(document).on("click", "#ec-btn-export", function () {
+        exportRecords();
+    });
+
+    // Import records
+    $(document).on("click", "#ec-btn-import", function () {
+        $("#ec-import-file").val("").click();
+    });
+    $(document).on("change", "#ec-import-file", function () {
+        const file = this.files?.[0];
+        if (file) {
+            importRecords(file);
+            $(this).val("");
+        }
     });
 
     // Delete item
