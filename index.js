@@ -1133,7 +1133,7 @@ function createBlankItem(type, extraData = {}) {
     } else if (type === GEN_SECRETS) {
         return {
             id: `evt-${uid()}`,
-            holder: "",
+            holder: extraData.holder || "",
             secret: "",
             knownBy: "no one",
             status: "hidden",
@@ -1362,6 +1362,43 @@ function renderLibrary() {
 
                 for (const ev of events) {
                     itemsHtml += renderEventCard(rec.id, ev);
+                }
+
+                itemsHtml += `</div></div>`;
+            }
+        } else if (activeType === GEN_SECRETS) {
+            // Group secrets by holder (character)
+            const holderGroups = new Map();
+            for (const item of rec.items || []) {
+                const holder = item.holder || "Unknown";
+                if (!holderGroups.has(holder)) holderGroups.set(holder, []);
+                holderGroups.get(holder).push(item);
+            }
+            const totalSecrets = (rec.items || []).length;
+            const totalHolders = holderGroups.size;
+            countLabel = `${totalHolders} ${totalHolders === 1 ? "character" : "characters"}, ${totalSecrets} ${totalSecrets === 1 ? "secret" : "secrets"}`;
+
+            for (const [holder, secrets] of holderGroups) {
+                itemsHtml += `<div class="ec-day-group" data-holder="${escapeHtml(holder)}">
+                    <div class="ec-day-header">
+                        <div class="ec-day-info">
+                            <i class="fa-solid fa-user-secret"></i>
+                            <span class="ec-day-date">${escapeHtml(holder)}</span>
+                            <span class="ec-day-count">${secrets.length} ${secrets.length === 1 ? "secret" : "secrets"}</span>
+                        </div>
+                        <div class="ec-day-actions">
+                            <button class="ec-btn-icon ec-btn-add-secret-to-holder" title="Add secret for this character">
+                                <i class="fa-solid fa-plus"></i>
+                            </button>
+                            <button class="ec-btn-icon ec-btn-toggle-day" title="Collapse/expand">
+                                <i class="fa-solid fa-chevron-up"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="ec-day-events">`;
+
+                for (const secret of secrets) {
+                    itemsHtml += renderItemCard(rec.id, secret, activeType);
                 }
 
                 itemsHtml += `</div></div>`;
@@ -1983,6 +2020,13 @@ function bindEventHandlers() {
         const recordId = $(this).closest(".ec-record").data("record-id");
         const dayDate = $(this).closest(".ec-day-group").data("day-date");
         addManualItem(recordId, GEN_EVENTS, { date: dayDate });
+    });
+
+    // Add secret to a specific holder group
+    $(document).on("click", ".ec-btn-add-secret-to-holder", function () {
+        const recordId = $(this).closest(".ec-record").data("record-id");
+        const holder = $(this).closest(".ec-day-group").data("holder");
+        addManualItem(recordId, GEN_SECRETS, { holder });
     });
 
     // Add new record manually
