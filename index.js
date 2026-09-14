@@ -1169,6 +1169,13 @@ function addManualItem(recordId, type, extraData = {}) {
 
         const newItemEl = recEl.find(`.ec-item[data-item-id="${newItem.id}"]`);
         if (newItemEl.length) {
+            // Also expand the parent day-group if item is inside one
+            const dayGroup = newItemEl.closest(".ec-day-group");
+            if (dayGroup.length) {
+                dayGroup.find("> .ec-day-events").show();
+                dayGroup.find(".ec-btn-toggle-day i")
+                    .removeClass("fa-chevron-down").addClass("fa-chevron-up");
+            }
             newItemEl.find(".ec-item-body").hide();
             newItemEl.find(".ec-item-edit-form").show();
             newItemEl.find(".ec-item-actions").hide();
@@ -1203,6 +1210,12 @@ function addManualRecord(type) {
             .addClass("fa-chevron-up");
         const newItemEl = recEl.find(`.ec-item[data-item-id="${newItem.id}"]`);
         if (newItemEl.length) {
+            const dayGroup = newItemEl.closest(".ec-day-group");
+            if (dayGroup.length) {
+                dayGroup.find("> .ec-day-events").show();
+                dayGroup.find(".ec-btn-toggle-day i")
+                    .removeClass("fa-chevron-down").addClass("fa-chevron-up");
+            }
             newItemEl.find(".ec-item-body").hide();
             newItemEl.find(".ec-item-edit-form").show();
             newItemEl.find(".ec-item-actions").hide();
@@ -1302,7 +1315,49 @@ function importRecords(file) {
 
 // ---------- UI rendering ----------
 
-function renderLibrary() {
+/** Save which records and day-groups are currently expanded so we can restore after re-render. */
+function saveLibraryCollapseState() {
+    const state = { records: new Set(), dayGroups: new Set() };
+    $(".ec-record").each(function () {
+        const recId = $(this).data("record-id");
+        if ($(this).find("> .ec-record-items").is(":visible")) {
+            state.records.add(String(recId));
+        }
+    });
+    $(".ec-day-group").each(function () {
+        const dayKey = $(this).data("day-date") || $(this).data("holder") || "";
+        const recId = $(this).closest(".ec-record").data("record-id");
+        if ($(this).find("> .ec-day-events").is(":visible")) {
+            state.dayGroups.add(`${recId}||${dayKey}`);
+        }
+    });
+    return state;
+}
+
+/** Restore expand/collapse state after re-render. If no prior state, everything stays collapsed. */
+function restoreLibraryCollapseState(state) {
+    if (!state) return;
+    $(".ec-record").each(function () {
+        const recId = String($(this).data("record-id"));
+        if (state.records.has(recId)) {
+            $(this).find("> .ec-record-items").show();
+            $(this).find("> .ec-record-header .ec-btn-toggle-record i")
+                .removeClass("fa-chevron-down").addClass("fa-chevron-up");
+        }
+    });
+    $(".ec-day-group").each(function () {
+        const dayKey = $(this).data("day-date") || $(this).data("holder") || "";
+        const recId = $(this).closest(".ec-record").data("record-id");
+        if (state.dayGroups.has(`${recId}||${dayKey}`)) {
+            $(this).find("> .ec-day-events").show();
+            $(this).find(".ec-btn-toggle-day i")
+                .removeClass("fa-chevron-down").addClass("fa-chevron-up");
+        }
+    });
+}
+
+function renderLibrary(preserveState = true) {
+    const collapseState = preserveState ? saveLibraryCollapseState() : null;
     const settings = getSettings();
     const mem = getChatMemory();
     const activeType = settings.activeLibraryTab || GEN_EVENTS;
@@ -1354,11 +1409,11 @@ function renderLibrary() {
                                 <i class="fa-solid fa-plus"></i>
                             </button>
                             <button class="ec-btn-icon ec-btn-toggle-day" title="Collapse/expand day">
-                                <i class="fa-solid fa-chevron-up"></i>
+                                <i class="fa-solid fa-chevron-down"></i>
                             </button>
                         </div>
                     </div>
-                    <div class="ec-day-events">`;
+                    <div class="ec-day-events" style="display: none;">`;
 
                 for (const ev of events) {
                     itemsHtml += renderEventCard(rec.id, ev);
@@ -1391,11 +1446,11 @@ function renderLibrary() {
                                 <i class="fa-solid fa-plus"></i>
                             </button>
                             <button class="ec-btn-icon ec-btn-toggle-day" title="Collapse/expand">
-                                <i class="fa-solid fa-chevron-up"></i>
+                                <i class="fa-solid fa-chevron-down"></i>
                             </button>
                         </div>
                     </div>
-                    <div class="ec-day-events">`;
+                    <div class="ec-day-events" style="display: none;">`;
 
                 for (const secret of secrets) {
                     itemsHtml += renderItemCard(rec.id, secret, activeType);
@@ -1437,6 +1492,8 @@ function renderLibrary() {
 
         container.append(recordHtml);
     }
+
+    restoreLibraryCollapseState(collapseState);
 }
 
 function renderEventCard(recordId, item) {
