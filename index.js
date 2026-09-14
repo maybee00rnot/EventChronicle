@@ -1,13 +1,12 @@
 /**
  * EventChronicle — Structured event-based summary extension for SillyTavern.
  *
- * Five generation types:
+ * Three generation types:
  *   1. Events        — plot events grouped by in-world day
- *   2. Characters    — character profiles
- *   3. Locations     — scene/location memory for world consistency
- *   4. Relationships — relationship network between all characters
- *   5. Secrets      — character secrets with status tracking
+ *   2. Relationships — relationship network between all characters
+ *   3. Secrets       — character secrets with status tracking (grouped by holder)
  *
+ * (Characters and Locations were removed — covered by lorebook and event details.)
  * Data lives in chat[0].extra.EventChronicle (per-character storage).
  */
 
@@ -100,62 +99,6 @@ Rules:
 - Extract ALL events, not just major ones.
 - Events on the same in-world day must share the same "date" value.
 - Do NOT use asterisks (*), only plain text.
-- Write in English.
-- Output valid JSON only.`,
-
-    [GEN_CHARACTERS]: `You are analyzing a roleplay chat. Extract information about ALL characters that {{user}} has interacted with.
-
-For each character, provide:
-- name: character's name
-- appearance: physical description based on what's shown in the chat
-- relationship: current relationship status with {{user}} (and how it changed if relevant)
-- personality: key personality traits observed
-
-Output ONLY a valid JSON array. No commentary, no markdown fences.
-
-Example format:
-[
-  {
-    "name": "Elara",
-    "appearance": "Tall elven woman with silver hair and green eyes, wearing a barmaid's apron",
-    "relationship": "Friendly acquaintance, potential ally",
-    "personality": "Warm, observant, slightly secretive"
-  }
-]
-
-Important rules:
-- Include ALL characters {{user}} interacted with.
-- Base descriptions on what actually appears in the chat, not assumptions.
-- Write in English.
-- Output valid JSON only.`,
-
-    [GEN_LOCATIONS]: `You are analyzing a roleplay chat. Extract information about ALL locations/places that appear or are described in the chat.
-
-For each location, provide:
-- name: location name. Use the · separator to show hierarchy (e.g., "Silver Goblet·Hall", "Silver Goblet·Room 203", "Royal Palace·Throne Room")
-- description: PERMANENT physical features only — structure, materials, fixed furniture, architectural details, window directions, permanent decorations, relative position within parent location. Do NOT include temporary states like weather, lighting, crowd size, time-specific ambiance.
-- parentLocation: the parent location name if this is a sub-location (e.g., for "Silver Goblet·Hall" the parent is "Silver Goblet"). Empty string if top-level.
-
-Output ONLY a valid JSON array. No commentary, no markdown fences.
-
-Example format:
-[
-  {
-    "name": "Silver Goblet",
-    "description": "Two-story wooden building at the north road near the forest edge. Ground floor has the main hall and kitchen, upper floor has guest rooms. Faded wooden sign above the entrance.",
-    "parentLocation": ""
-  },
-  {
-    "name": "Silver Goblet·Hall",
-    "description": "Located on the first floor. Tall wooden hall with a long bar counter in the center, several round tables, fireplace on the east wall, trophy antlers above the mantle.",
-    "parentLocation": "Silver Goblet"
-  }
-]
-
-Important rules:
-- Only permanent physical features. No weather, lighting, mood, crowds, temporary objects.
-- Same location must always use exactly the same name.
-- Sub-locations describe position relative to their parent, not repeating the parent's external geography.
 - Write in English.
 - Output valid JSON only.`,
 
@@ -255,49 +198,6 @@ Rules:
 - Write in English.
 - Output valid JSON only.`,
 
-    [GEN_CHARACTERS]: `You are analyzing a roleplay chat. You are UPDATING an existing character database.
-
-Below you will see EXISTING CHARACTER PROFILES already extracted.
-Then you will see NEW CHAT MESSAGES.
-
-Your task:
-1. For EXISTING characters whose information has CHANGED or been EXPANDED in the new messages — output their FULL updated profile.
-2. For NEW characters that appear in the new messages but are NOT in the existing list — add their full profile.
-3. Do NOT output characters whose profiles have NOT changed.
-
-For each character, provide:
-- name: character's name (MUST match the existing name exactly for updates)
-- appearance, relationship, personality
-
-Output ONLY a valid JSON array. No commentary, no markdown fences.
-Rules:
-- Use the EXACT same name as the existing entry for updates.
-- Only output characters that are new or changed.
-- Write in English.
-- Output valid JSON only.`,
-
-    [GEN_LOCATIONS]: `You are analyzing a roleplay chat. You are UPDATING an existing location database.
-
-Below you will see EXISTING LOCATIONS already extracted.
-Then you will see NEW CHAT MESSAGES.
-
-Your task:
-1. For EXISTING locations whose permanent features have CHANGED or been EXPANDED — output their FULL updated entry.
-2. For NEW locations that appear in the new messages but are NOT in the existing list — add their full entry.
-3. Do NOT output locations that have NOT changed.
-
-For each location, provide:
-- name: location name (use · separator for hierarchy, MUST match existing name exactly for updates)
-- description: PERMANENT physical features only
-- parentLocation: parent location name or empty string
-
-Output ONLY a valid JSON array. No commentary, no markdown fences.
-Rules:
-- Use the EXACT same name as the existing entry for updates.
-- Only permanent physical features, no weather/mood/crowds.
-- Write in English.
-- Output valid JSON only.`,
-
     [GEN_RELATIONSHIPS]: `You are analyzing a roleplay chat. You are UPDATING an existing relationship network.
 
 Below you will see EXISTING RELATIONSHIPS already extracted.
@@ -353,8 +253,6 @@ const DEFAULT_SETTINGS = {
     injectionRole: 0,
     scanWI: true,
     promptEvents: DEFAULT_PROMPTS[GEN_EVENTS],
-    promptCharacters: DEFAULT_PROMPTS[GEN_CHARACTERS],
-    promptLocations: DEFAULT_PROMPTS[GEN_LOCATIONS],
     promptRelationships: DEFAULT_PROMPTS[GEN_RELATIONSHIPS],
     promptSecrets: DEFAULT_PROMPTS[GEN_SECRETS],
     rangeMode: "auto",
@@ -362,8 +260,6 @@ const DEFAULT_SETTINGS = {
     connectionProfileId: "",
     autoUpdateEnabled: false,
     autoUpdateEvents: 0,
-    autoUpdateCharacters: 0,
-    autoUpdateLocations: 0,
     autoUpdateRelationships: 0,
     autoUpdateSecrets: 0,
     activeTab: GEN_EVENTS,
@@ -404,7 +300,6 @@ function getSettings() {
     }
 
     // Migrate: add new prompt fields that didn't exist before
-    if (!s.promptLocations) { s.promptLocations = DEFAULT_PROMPTS[GEN_LOCATIONS]; }
     if (!s.promptRelationships) { s.promptRelationships = DEFAULT_PROMPTS[GEN_RELATIONSHIPS]; }
     if (!s.promptSecrets) { s.promptSecrets = DEFAULT_PROMPTS[GEN_SECRETS]; }
 
@@ -688,12 +583,6 @@ function getMatchKey(type, item) {
         const date = String(item.date || "").trim().toLowerCase();
         return title ? `${title}||${date}` : null;
     }
-    if (type === GEN_CHARACTERS) {
-        return String(item.name || "").trim().toLowerCase() || null;
-    }
-    if (type === GEN_LOCATIONS) {
-        return String(item.name || "").trim().toLowerCase() || null;
-    }
     if (type === GEN_RELATIONSHIPS) {
         const c1 = String(item.character1 || "").trim().toLowerCase();
         const c2 = String(item.character2 || "").trim().toLowerCase();
@@ -797,10 +686,6 @@ async function generate(type) {
             // Use initial prompt (user-customizable)
             if (type === GEN_EVENTS) {
                 prompt = settings.promptEvents || DEFAULT_PROMPTS[GEN_EVENTS];
-            } else if (type === GEN_CHARACTERS) {
-                prompt = settings.promptCharacters || DEFAULT_PROMPTS[GEN_CHARACTERS];
-            } else if (type === GEN_LOCATIONS) {
-                prompt = settings.promptLocations || DEFAULT_PROMPTS[GEN_LOCATIONS];
             } else if (type === GEN_RELATIONSHIPS) {
                 prompt = settings.promptRelationships || DEFAULT_PROMPTS[GEN_RELATIONSHIPS];
             } else {
@@ -908,8 +793,6 @@ async function generate(type) {
 
         const typeLabel = {
             [GEN_EVENTS]: "events",
-            [GEN_CHARACTERS]: "characters",
-            [GEN_LOCATIONS]: "locations",
             [GEN_RELATIONSHIPS]: "relationships",
             [GEN_SECRETS]: "secrets",
         }[type] || type;
@@ -970,8 +853,6 @@ function checkAutoUpdate() {
 
     const typeMap = {
         [GEN_EVENTS]: settings.autoUpdateEvents,
-        [GEN_CHARACTERS]: settings.autoUpdateCharacters,
-        [GEN_LOCATIONS]: settings.autoUpdateLocations,
         [GEN_RELATIONSHIPS]: settings.autoUpdateRelationships,
         [GEN_SECRETS]: settings.autoUpdateSecrets,
     };
@@ -1044,6 +925,7 @@ function buildInjectionTextForType(type) {
         return parts.join("\n\n");
     }
 
+    // Backward compat: Characters/Locations/Preferences still render if old data exists
     if (type === GEN_CHARACTERS) {
         const parts = [];
         for (const rec of records) {
@@ -1081,30 +963,65 @@ function buildInjectionTextForType(type) {
     }
 
     if (type === GEN_RELATIONSHIPS) {
-        const parts = [];
+        // Group by character pairs with clear separators
+        const allRels = [];
         for (const rec of records) {
             for (const rel of rec.items || []) {
-                const c1 = rel.character1 || "?";
+                allRels.push(rel);
+            }
+        }
+        if (allRels.length === 0) return "";
+
+        // Group by first character (character1) for readability
+        const byChar = new Map();
+        for (const rel of allRels) {
+            const c1 = rel.character1 || "?";
+            if (!byChar.has(c1)) byChar.set(c1, []);
+            byChar.get(c1).push(rel);
+        }
+
+        const parts = [];
+        for (const [charName, rels] of byChar) {
+            let section = `=== ${charName} ===\n`;
+            for (const rel of rels) {
                 const c2 = rel.character2 || "?";
                 const rtype = rel.type || "unknown";
                 const details = rel.details || "";
-                parts.push(`${c1} → ${c2}: ${rtype}${details ? " — " + details : ""}`);
+                section += `→ ${c2}: ${rtype}${details ? " — " + details : ""}\n`;
             }
+            parts.push(section.trim());
         }
-        return parts.join("\n");
+        return parts.join("\n\n");
     }
 
     if (type === GEN_SECRETS) {
-        const parts = [];
+        // Group by holder (character) for clear structure
+        const allSecrets = [];
         for (const rec of records) {
             for (const s of rec.items || []) {
-                const holder = s.holder || "Unknown";
-                const status = (s.status || "hidden").toUpperCase();
-                let text = `[${status}] ${holder}'s secret: ${s.secret || "N/A"}`;
-                if (s.knownBy && s.knownBy !== "no one") text += `\n  Known by: ${s.knownBy}`;
-                if (s.hints) text += `\n  Hints: ${s.hints}`;
-                parts.push(text);
+                allSecrets.push(s);
             }
+        }
+        if (allSecrets.length === 0) return "";
+
+        const byHolder = new Map();
+        for (const s of allSecrets) {
+            const holder = s.holder || "Unknown";
+            if (!byHolder.has(holder)) byHolder.set(holder, []);
+            byHolder.get(holder).push(s);
+        }
+
+        const parts = [];
+        for (const [holder, secrets] of byHolder) {
+            let section = `=== ${holder} ===\n`;
+            for (let i = 0; i < secrets.length; i++) {
+                const s = secrets[i];
+                const status = (s.status || "hidden").toUpperCase();
+                section += `\n[${status}] ${s.secret || "N/A"}`;
+                if (s.knownBy && s.knownBy !== "no one") section += `\n  Known by: ${s.knownBy}`;
+                if (s.hints) section += `\n  Hints: ${s.hints}`;
+            }
+            parts.push(section.trim());
         }
         return parts.join("\n\n");
     }
@@ -1126,10 +1043,12 @@ function updateContextInjection() {
     }
 
     const eventText = buildInjectionTextForType(GEN_EVENTS);
-    const charText = buildInjectionTextForType(GEN_CHARACTERS);
-    const locText = buildInjectionTextForType(GEN_LOCATIONS);
     const relText = buildInjectionTextForType(GEN_RELATIONSHIPS);
     const secText = buildInjectionTextForType(GEN_SECRETS);
+
+    // Backward compat: still inject old Characters/Locations data if it exists
+    const charText = buildInjectionTextForType(GEN_CHARACTERS);
+    const locText = buildInjectionTextForType(GEN_LOCATIONS);
 
     const sections = [];
     if (eventText) sections.push(`<story_events>\n${eventText}\n</story_events>`);
@@ -1202,21 +1121,6 @@ function createBlankItem(type, extraData = {}) {
             characters: "",
             detail: "",
             consequences: "",
-        };
-    } else if (type === GEN_CHARACTERS) {
-        return {
-            id: `evt-${uid()}`,
-            name: "New Character",
-            appearance: "",
-            relationship: "",
-            personality: "",
-        };
-    } else if (type === GEN_LOCATIONS) {
-        return {
-            id: `evt-${uid()}`,
-            name: "New Location",
-            description: "",
-            parentLocation: "",
         };
     } else if (type === GEN_RELATIONSHIPS) {
         return {
@@ -1800,8 +1704,6 @@ function getSettingsHtml() {
                         </div>
                         <div class="ec-auto-update-sections">
                             <div class="ec-auto-row"><i class="fa-solid fa-scroll"></i><span class="ec-auto-label">Events</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-events" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
-                            <div class="ec-auto-row"><i class="fa-solid fa-users"></i><span class="ec-auto-label">Characters</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-characters" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
-                            <div class="ec-auto-row"><i class="fa-solid fa-map-marker-alt"></i><span class="ec-auto-label">Locations</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-locations" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
                             <div class="ec-auto-row"><i class="fa-solid fa-project-diagram"></i><span class="ec-auto-label">Relationships</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-relationships" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
                             <div class="ec-auto-row"><i class="fa-solid fa-user-secret"></i><span class="ec-auto-label">Secrets</span><span class="ec-auto-mid">every</span><input type="number" id="ec-auto-secrets" class="text_pole ec-auto-input" min="0" value="0"><span class="ec-auto-suffix">msg</span></div>
                             <div style="font-size: 0.75em; opacity: 0.45; padding: 2px 0 0 4px;">0 = disabled for that type</div>
@@ -1818,12 +1720,6 @@ function getSettingsHtml() {
                         <button class="ec-tab active" data-tab="${GEN_EVENTS}">
                             <i class="fa-solid fa-scroll"></i> Events
                         </button>
-                        <button class="ec-tab" data-tab="${GEN_CHARACTERS}">
-                            <i class="fa-solid fa-users"></i> Chars
-                        </button>
-                        <button class="ec-tab" data-tab="${GEN_LOCATIONS}">
-                            <i class="fa-solid fa-map-marker-alt"></i> Locs
-                        </button>
                         <button class="ec-tab" data-tab="${GEN_RELATIONSHIPS}">
                             <i class="fa-solid fa-project-diagram"></i> Rels
                         </button>
@@ -1836,14 +1732,6 @@ function getSettingsHtml() {
                     <div class="ec-tab-content" data-for="${GEN_EVENTS}">
                         <div class="ec-prompt-header"><label>Events prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_EVENTS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
                         <textarea class="text_pole ec-prompt-input" id="ec-prompt-events" rows="6"></textarea>
-                    </div>
-                    <div class="ec-tab-content" data-for="${GEN_CHARACTERS}" style="display: none;">
-                        <div class="ec-prompt-header"><label>Characters prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_CHARACTERS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
-                        <textarea class="text_pole ec-prompt-input" id="ec-prompt-characters" rows="6"></textarea>
-                    </div>
-                    <div class="ec-tab-content" data-for="${GEN_LOCATIONS}" style="display: none;">
-                        <div class="ec-prompt-header"><label>Locations prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_LOCATIONS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
-                        <textarea class="text_pole ec-prompt-input" id="ec-prompt-locations" rows="6"></textarea>
                     </div>
                     <div class="ec-tab-content" data-for="${GEN_RELATIONSHIPS}" style="display: none;">
                         <div class="ec-prompt-header"><label>Relationships prompt:</label><button class="ec-btn-icon ec-btn-reset-prompt" data-prompt-type="${GEN_RELATIONSHIPS}" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button></div>
@@ -1858,12 +1746,6 @@ function getSettingsHtml() {
                     <div class="ec-setting-row ec-gen-row">
                         <button class="menu_button" id="ec-btn-generate-events">
                             <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Events
-                        </button>
-                        <button class="menu_button" id="ec-btn-generate-characters" style="display: none;">
-                            <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Characters
-                        </button>
-                        <button class="menu_button" id="ec-btn-generate-locations" style="display: none;">
-                            <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Locations
                         </button>
                         <button class="menu_button" id="ec-btn-generate-relationships" style="display: none;">
                             <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Relationships
@@ -1947,14 +1829,6 @@ function bindEventHandlers() {
         settings.promptEvents = $(this).val();
         saveSettingsDebounced();
     });
-    $(document).on("input", "#ec-prompt-characters", function () {
-        settings.promptCharacters = $(this).val();
-        saveSettingsDebounced();
-    });
-    $(document).on("input", "#ec-prompt-locations", function () {
-        settings.promptLocations = $(this).val();
-        saveSettingsDebounced();
-    });
     $(document).on("input", "#ec-prompt-relationships", function () {
         settings.promptRelationships = $(this).val();
         saveSettingsDebounced();
@@ -1971,8 +1845,6 @@ function bindEventHandlers() {
 
         const promptMap = {
             [GEN_EVENTS]: { key: "promptEvents", el: "#ec-prompt-events" },
-            [GEN_CHARACTERS]: { key: "promptCharacters", el: "#ec-prompt-characters" },
-            [GEN_LOCATIONS]: { key: "promptLocations", el: "#ec-prompt-locations" },
             [GEN_RELATIONSHIPS]: { key: "promptRelationships", el: "#ec-prompt-relationships" },
             [GEN_SECRETS]: { key: "promptSecrets", el: "#ec-prompt-secrets" },
         };
@@ -2045,8 +1917,6 @@ function bindEventHandlers() {
 
     const autoFields = {
         "#ec-auto-events": "autoUpdateEvents",
-        "#ec-auto-characters": "autoUpdateCharacters",
-        "#ec-auto-locations": "autoUpdateLocations",
         "#ec-auto-relationships": "autoUpdateRelationships",
         "#ec-auto-secrets": "autoUpdateSecrets",
     };
@@ -2061,8 +1931,6 @@ function bindEventHandlers() {
 
     // Generate buttons
     $(document).on("click", "#ec-btn-generate-events", () => generate(GEN_EVENTS));
-    $(document).on("click", "#ec-btn-generate-characters", () => generate(GEN_CHARACTERS));
-    $(document).on("click", "#ec-btn-generate-locations", () => generate(GEN_LOCATIONS));
     $(document).on("click", "#ec-btn-generate-relationships", () => generate(GEN_RELATIONSHIPS));
     $(document).on("click", "#ec-btn-generate-secrets", () => generate(GEN_SECRETS));
 
@@ -2180,19 +2048,6 @@ function bindEventHandlers() {
                 detail: el.find(".ec-edit-detail").val(),
                 consequences: el.find(".ec-edit-consequences").val(),
             };
-        } else if (type === GEN_CHARACTERS) {
-            newData = {
-                name: el.find(".ec-edit-name").val(),
-                appearance: el.find(".ec-edit-appearance").val(),
-                relationship: el.find(".ec-edit-relationship").val(),
-                personality: el.find(".ec-edit-personality").val(),
-            };
-        } else if (type === GEN_LOCATIONS) {
-            newData = {
-                name: el.find(".ec-edit-name").val(),
-                parentLocation: el.find(".ec-edit-parentLocation").val(),
-                description: el.find(".ec-edit-description").val(),
-            };
         } else if (type === GEN_RELATIONSHIPS) {
             newData = {
                 character1: el.find(".ec-edit-character1").val(),
@@ -2245,8 +2100,6 @@ function loadSettingsUI() {
     const settings = getSettings();
     $("#ec-enabled").prop("checked", settings.enabled);
     $("#ec-prompt-events").val(settings.promptEvents);
-    $("#ec-prompt-characters").val(settings.promptCharacters);
-    $("#ec-prompt-locations").val(settings.promptLocations);
     $("#ec-prompt-relationships").val(settings.promptRelationships);
     $("#ec-prompt-secrets").val(settings.promptSecrets);
     $("#ec-range-mode").val(settings.rangeMode);
@@ -2261,8 +2114,6 @@ function loadSettingsUI() {
     // Auto-update
     $("#ec-auto-update-enabled").prop("checked", settings.autoUpdateEnabled);
     $("#ec-auto-events").val(settings.autoUpdateEvents || 0);
-    $("#ec-auto-characters").val(settings.autoUpdateCharacters || 0);
-    $("#ec-auto-locations").val(settings.autoUpdateLocations || 0);
     $("#ec-auto-relationships").val(settings.autoUpdateRelationships || 0);
     $("#ec-auto-secrets").val(settings.autoUpdateSecrets || 0);
     $(".ec-auto-update-sections").toggle(!!settings.autoUpdateEnabled);
